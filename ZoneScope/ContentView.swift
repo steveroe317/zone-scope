@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var healthKit = HealthKitManager()
     @State private var selectedPeriod: TimePeriod = .week
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -52,6 +53,13 @@ struct ContentView: View {
                 Spacer()
             }
             .navigationTitle("ZoneScope")
+            .onChange(of: scenePhase) { _, newPhase in
+                guard newPhase == .active, healthKit.authorized else { return }
+                if let last = healthKit.lastFetchDate,
+                   Date().timeIntervalSince(last) > 15 * 60 {
+                    Task { await healthKit.fetchAllZoneData() }
+                }
+            }
             .task {
                 if healthKit.authorized {
                     await healthKit.fetchAllZoneData()

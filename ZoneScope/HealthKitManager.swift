@@ -53,15 +53,29 @@ struct ZoneMinutes {
     }
 }
 
+private struct CachedWorkout {
+    let uuid: UUID
+    let startDate: Date
+    let endDate: Date
+    let zoneMinutes: ZoneMinutes
+    let cachedWithMaxHR: Double
+    let cachedWithRestingHR: Double
+}
+
 @Observable
 class HealthKitManager {
     var authorized = false
     var isLoading = false
     var zoneData: [TimePeriod: ZoneMinutes] = [:]
+    private(set) var lastFetchDate: Date?
 
     private let healthStore = HKHealthStore()
+    private var workoutObserverQuery: HKObserverQuery?
     var maxHeartRate: Double = 190
     var restingHeartRate: Double = 60
+
+    private var workoutCache: [UUID: CachedWorkout] = [:]
+    private let hrParamTolerance: Double = 0.5
 
     var isHealthKitAvailable: Bool {
         HKHealthStore.isHealthDataAvailable()
@@ -82,6 +96,7 @@ class HealthKitManager {
             authorized = true
             loadMaxHeartRate()
             await loadRestingHeartRate()
+            startObservingWorkouts()
             await fetchAllZoneData()
         } catch {
             authorized = false
@@ -121,25 +136,86 @@ class HealthKitManager {
         }
     }
 
+    private func startObservingWorkouts() {
+        guard workoutObserverQuery == nil else { return }
+
+        let query = HKObserverQuery(sampleType: HKObjectType.workoutType(), predicate: nil) { [weak self] _, completionHandler, error in
+            guard error == nil, let self else {
+                completionHandler()
+                return
+            }
+            Task { @MainActor in
+                await self.fetchAllZoneData()
+            }
+            completionHandler()
+        }
+        workoutObserverQuery = query
+        healthStore.execute(query)
+    }
+
+    @MainActor
     func fetchAllZoneData() async {
+        guard !isLoading else { return }
+        lastFetchDate = Date()
         isLoading = true
         defer { isLoading = false }
 
-        var result: [TimePeriod: ZoneMinutes] = [:]
-        for period in TimePeriod.allCases {
-            result[period] = await fetchZoneMinutes(for: period)
+        // Step 1: fetch workout metadata for year window — 1 query, no HR data
+        let currentWorkouts = await fetchWorkoutObjects(since: TimePeriod.year.startDate)
+
+        // Step 2: diff UUIDs
+        let currentIDs = Set(currentWorkouts.map { $0.uuid })
+        let cachedIDs  = Set(workoutCache.keys)
+        let deletedIDs = cachedIDs.subtracting(currentIDs)
+        let addedIDs   = currentIDs.subtracting(cachedIDs)
+
+        // Step 3: detect modified workouts (same UUID, different endDate)
+        let modifiedIDs = currentIDs.subtracting(addedIDs).filter { id in
+            guard let cached  = workoutCache[id],
+                  let current = currentWorkouts.first(where: { $0.uuid == id })
+            else { return false }
+            return cached.endDate != current.endDate
         }
-        zoneData = result
+
+        // Step 4: detect HR-param-invalidated entries
+        let invalidatedIDs = Set(workoutCache.values
+            .filter {
+                abs($0.cachedWithMaxHR     - maxHeartRate)     > hrParamTolerance ||
+                abs($0.cachedWithRestingHR - restingHeartRate) > hrParamTolerance
+            }
+            .map { $0.uuid })
+
+        // Step 5: evict deleted, modified, and invalidated entries
+        for id in deletedIDs.union(modifiedIDs).union(invalidatedIDs) {
+            workoutCache.removeValue(forKey: id)
+        }
+
+        // Step 6: fetch HR + compute zones for new, modified, and invalidated workouts
+        let idsToFetch      = addedIDs.union(modifiedIDs).union(invalidatedIDs)
+        let workoutsToFetch = currentWorkouts.filter { idsToFetch.contains($0.uuid) }
+        for workout in workoutsToFetch {
+            let mins = await fetchHRZoneMinutes(for: workout)
+            workoutCache[workout.uuid] = CachedWorkout(
+                uuid:                workout.uuid,
+                startDate:           workout.startDate,
+                endDate:             workout.endDate,
+                zoneMinutes:         mins,
+                cachedWithMaxHR:     maxHeartRate,
+                cachedWithRestingHR: restingHeartRate
+            )
+        }
+
+        // Step 7: recompute period totals from cache — no HealthKit queries
+        zoneData = recomputeZoneData()
     }
 
-    private func fetchZoneMinutes(for period: TimePeriod) async -> ZoneMinutes {
+    private func fetchWorkoutObjects(since startDate: Date) async -> [HKWorkout] {
         let predicate = HKQuery.predicateForSamples(
-            withStart: period.startDate,
+            withStart: startDate,
             end: Date(),
             options: .strictStartDate
         )
-
-        let workouts: [HKWorkout] = await withCheckedContinuation { continuation in
+        return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: predicate,
@@ -150,17 +226,23 @@ class HealthKitManager {
             }
             healthStore.execute(query)
         }
+    }
 
-        var total = ZoneMinutes()
-        for workout in workouts {
-            let mins = await fetchHRZoneMinutes(for: workout)
-            total.zone1 += mins.zone1
-            total.zone2 += mins.zone2
-            total.zone3 += mins.zone3
-            total.zone4 += mins.zone4
-            total.zone5 += mins.zone5
+    private func recomputeZoneData() -> [TimePeriod: ZoneMinutes] {
+        var result: [TimePeriod: ZoneMinutes] = [:]
+        for period in TimePeriod.allCases {
+            let windowStart = period.startDate
+            var total = ZoneMinutes()
+            for entry in workoutCache.values where entry.startDate >= windowStart {
+                total.zone1 += entry.zoneMinutes.zone1
+                total.zone2 += entry.zoneMinutes.zone2
+                total.zone3 += entry.zoneMinutes.zone3
+                total.zone4 += entry.zoneMinutes.zone4
+                total.zone5 += entry.zoneMinutes.zone5
+            }
+            result[period] = total
         }
-        return total
+        return result
     }
 
     private func fetchHRZoneMinutes(for workout: HKWorkout) async -> ZoneMinutes {
