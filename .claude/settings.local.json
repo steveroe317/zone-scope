@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/steveroe/playground/ZoneScope/ZoneScope -type f | grep -E '\\\\.\\(swift|json\\)$')"
+    ]
+  }
+}
