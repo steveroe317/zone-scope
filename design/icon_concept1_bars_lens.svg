@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="ios">
+      <rect width="1024" height="1024" rx="224"/>
+    </clipPath>
+    <clipPath id="lens">
+      <circle cx="512" cy="512" r="300"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#ios)">
+
+    <!-- Background -->
+    <rect width="1024" height="1024" fill="#FBF8F5"/>
+
+    <!-- Bars, clipped to lens circle -->
+    <g clip-path="url(#lens)">
+      <!-- Bar 1: muted blue -->
+      <rect x="326" y="380" width="72" height="300" rx="12" fill="#7BA8C4"/>
+      <!-- Bar 2: teal -->
+      <rect x="426" y="290" width="72" height="390" rx="12" fill="#5BA89A"/>
+      <!-- Bar 3: amber — top clipped by lens -->
+      <rect x="526" y="200" width="72" height="480" rx="12" fill="#E8A84C"/>
+      <!-- Bar 4: coral — top clipped by lens -->
+      <rect x="626" y="140" width="72" height="540" rx="12" fill="#E07060"/>
+    </g>
+
+    <!-- Lens ring -->
+    <circle cx="512" cy="512" r="300" fill="none" stroke="#B8B8B8" stroke-width="10"/>
+
+  </g>
+</svg>

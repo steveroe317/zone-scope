@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="ios">
+      <rect width="1024" height="1024" rx="224"/>
+    </clipPath>
+    <clipPath id="pill-clip">
+      <rect x="382" y="232" width="260" height="560" rx="130"/>
+    </clipPath>
+    <linearGradient id="zone-gradient" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%"   stop-color="#3A6CB5"/>
+      <stop offset="25%"  stop-color="#45A090"/>
+      <stop offset="50%"  stop-color="#5CAF68"/>
+      <stop offset="75%"  stop-color="#E09828"/>
+      <stop offset="100%" stop-color="#D5503A"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#ios)">
+
+    <!-- Background -->
+    <rect width="1024" height="1024" fill="#F2EDE8"/>
+
+    <!-- Gradient pill -->
+    <rect x="382" y="232" width="260" height="560" rx="130" fill="url(#zone-gradient)"/>
+
+    <!-- Threshold line at 60% from bottom — sits in the straight section of the pill -->
+    <line x1="382" y1="456" x2="642" y2="456"
+          stroke="white" stroke-width="7" stroke-linecap="round"
+          clip-path="url(#pill-clip)"/>
+
+  </g>
+</svg>

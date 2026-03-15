@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="ios">
+      <rect width="1024" height="1024" rx="224"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#ios)">
+
+    <!-- Zone bands — three equal vertical columns -->
+    <rect x="0"   y="0" width="341" height="1024" fill="#6B9FC4"/>
+    <rect x="341" y="0" width="342" height="1024" fill="#5FA876"/>
+    <rect x="683" y="0" width="341" height="1024" fill="#E07868"/>
+
+    <!-- Running figure — white, stroke-based, spanning all three bands -->
+    <g fill="none" stroke="white" stroke-width="40"
+       stroke-linecap="round" stroke-linejoin="round">
+
+      <!-- Head -->
+      <circle cx="605" cy="275" r="60" fill="white" stroke="none"/>
+
+      <!-- Torso -->
+      <line x1="588" y1="335" x2="550" y2="545"/>
+
+      <!-- Back arm (up and behind) -->
+      <line x1="575" y1="390" x2="685" y2="315"/>
+
+      <!-- Forward arm (down and ahead) -->
+      <line x1="575" y1="390" x2="400" y2="485"/>
+
+      <!-- Left leg — forward stride -->
+      <line x1="550" y1="545" x2="445" y2="680"/>
+      <line x1="445" y1="680" x2="335" y2="760"/>
+
+      <!-- Right leg — push-off -->
+      <line x1="550" y1="545" x2="618" y2="672"/>
+      <line x1="618" y1="672" x2="692" y2="758"/>
+
+    </g>
+
+  </g>
+</svg>
