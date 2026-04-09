@@ -1,9 +1,8 @@
 # Created by https://www.toptal.com/developers/gitignore/api/macos,xcode,swift,swiftpackagemanager,cocoapods
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,xcode,swift,swiftpackagemanager,cocoapods
 
-# Image files
-.pxd
-.png
+# Image design files
+design/.pxd
 
 ### CocoaPods ###
 ## CocoaPods GitIgnore Template
