@@ -2,7 +2,7 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,xcode,swift,swiftpackagemanager,cocoapods
 
 # Image design files
-design/.pxd
+design/
 
 ### CocoaPods ###
 ## CocoaPods GitIgnore Template
