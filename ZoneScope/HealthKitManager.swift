@@ -62,8 +62,8 @@ private struct CachedWorkout {
     let cachedWithRestingHR: Double
 }
 
-@Observable
-class HealthKitManager {
+@MainActor @Observable
+final class HealthKitManager {
     var authorized = false
     var isLoading = false
     var zoneData: [TimePeriod: ZoneMinutes] = [:]
@@ -144,7 +144,7 @@ class HealthKitManager {
                 completionHandler()
                 return
             }
-            Task { @MainActor in
+            Task {
                 await self.fetchAllZoneData()
             }
             completionHandler()
