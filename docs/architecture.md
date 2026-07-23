@@ -5,8 +5,11 @@
 ZoneScope is a single-screen iOS app that reads a user's workouts and heart-rate
 samples from HealthKit and visualizes how much time they spent in each of five
 heart-rate training zones over a selectable time period (Day, Week, Month,
-Year). It is a read-only client of Apple Health: it writes nothing back, has no
-network layer, no persistence of its own, and no accounts.
+Year). The chart can optionally screen out Zone 1 (Recovery) to focus on the
+higher-intensity zones. It is a read-only client of Apple Health: it writes
+nothing back, has no network layer, no accounts, and stores no domain data of
+its own — it persists only a single UI preference (the Zone 1 filter) via
+`@AppStorage`.
 
 - **Platform:** iOS 26.2+ (deployment target)
 - **Language / UI:** Swift, SwiftUI, with `@Observable` for shared state
@@ -24,9 +27,9 @@ network layer, no persistence of its own, and no accounts.
 ZoneScope/
 ├── ZoneScope/                     # App source
 │   ├── ZoneScopeApp.swift         # @main entry point / WindowGroup
-│   ├── ContentView.swift          # Root view: period picker + state routing
+│   ├── ContentView.swift          # Root view: period picker, state routing, options menu
 │   ├── AuthPromptView.swift       # Empty-state view prompting HealthKit access
-│   ├── ZoneChartView.swift        # Assembles the five zone rows + total
+│   ├── ZoneChartView.swift        # Assembles four or five zone rows + total
 │   ├── ZoneRowView.swift          # One zone's bar + labels
 │   ├── HealthKitManager.swift     # Observable model: HealthKit access + zone math
 │   ├── TimeFormatting.swift       # formatTime() free function
@@ -70,12 +73,16 @@ Views are small, single-responsibility structs in separate files (per the
 project's style guidelines):
 
 - **`ContentView`** — owns the `HealthKitManager` via `@State` and routes between
-  mutually exclusive UI states (see State machine below).
+  mutually exclusive UI states (see State machine below). Also owns the
+  `@AppStorage("hideZone1")` preference and exposes it through a toolbar `Menu`
+  toggle (shown only when authorized).
 - **`AuthPromptView`** — pure presentational empty state; takes an `action`
   closure invoked when the user taps "Grant Access."
-- **`ZoneChartView`** — receives a `ZoneMinutes` value plus HR parameters and
-  lays out five `ZoneRowView`s and a total. Derives per-zone BPM boundary labels
-  from the HR parameters.
+- **`ZoneChartView`** — receives a `ZoneMinutes` value, HR parameters, and a
+  `hideZone1` flag. Computes `visibleZones`, renormalizes bar widths to the max
+  of the *visible* zones, and shows a total summed over only the visible zones.
+  Derives per-zone BPM boundary labels from the HR parameters via a
+  `zoneLimit(for:)` lookup.
 - **`ZoneRowView`** — renders one zone: name/number, a proportional bar, and the
   minutes/BPM-range labels.
 
@@ -96,6 +103,12 @@ receive plain value types, which keeps them trivially previewable and testable.
 4. **Have data for the selected period** (`zoneMinutes.total > 0`) →
    `ZoneChartView`
 5. **Otherwise** → `ContentUnavailableView` ("No Workout Data")
+
+The data-present check (step 4) keys on the *full* `zoneMinutes.total`, not the
+filtered total, so a user whose only data is Zone 1 still lands on the chart
+(with empty 2–5 bars and a 0:00 visible total) rather than the "No Workout Data"
+state. The options toolbar menu holding the Zone 1 toggle appears whenever
+`authorized`, regardless of which of branches 3–5 is showing.
 
 ### Authorization and data-load flow
 
@@ -148,8 +161,27 @@ Given time-ordered heart-rate samples for one workout:
 - The percentage is bucketed into five zones at boundaries **60% / 70% / 80% /
   90%** (Zone 1 `<60%` … Zone 5 `≥90%`).
 
-`ZoneChartView` mirrors these same boundaries to render the human-readable BPM
-range labels shown next to each zone.
+`ZoneChartView` mirrors these same boundaries via its `zoneLimit(for:)` lookup to
+render the human-readable BPM range labels shown next to each zone, and renders
+only the currently visible zones (see Zone display filter below).
+
+### Zone display filter
+
+An optional "Hide Zone 1 (Recovery)" toggle lets the user drop Zone 1 from the
+chart. It is:
+
+- **Persisted** as `@AppStorage("hideZone1")` on `ContentView`, surviving app
+  relaunches, and reached through a toolbar `Menu`.
+- **Presentation-layer only.** The flag never reaches `HealthKitManager`, the
+  workout cache, or any HealthKit query — the domain layer always computes all
+  five zones. Toggling it simply passes a new `hideZone1` value into
+  `ZoneChartView`, which re-renders from the already-computed `ZoneMinutes`, so
+  it is instantaneous and triggers no data access.
+
+When Zone 1 is hidden, `ZoneChartView` filters it out of `visibleZones`,
+renormalizes bar widths to the largest *visible* zone (so zones 2–5 remain
+readable even though Zone 1 is usually the biggest bucket), and sums the "Total"
+row over the visible zones only.
 
 ### Refresh triggers
 
@@ -180,9 +212,12 @@ Because period totals are recomputed from the cache, switching the segmented
 
 ## Design notes, constraints, and trade-offs
 
-- **No persistence.** The cache is in-memory only; it is rebuilt on each cold
-  launch. This keeps the app simple but means the first fetch after launch pays
-  the full HR-query cost for every workout in the past year.
+- **Minimal persistence.** Domain data (the workout cache) is in-memory only and
+  rebuilt on each cold launch — the first fetch after launch pays the full
+  HR-query cost for every workout in the past year. The only persisted state is
+  the `hideZone1` UI preference, stored via `@AppStorage`.
+- **Display-only filter.** The Zone 1 filter changes only what is shown, never
+  what is fetched or computed; the domain layer is unaware of it.
 - **Fixed one-year query horizon.** All periods are derived from a single
   year-window fetch, which bounds cost but also caps the "Year" view at the last
   365 days and excludes anything older.
@@ -205,3 +240,10 @@ hardcoded frame widths in `ZoneRowView`, and — most significant architecturall
 **no unit tests** despite several pure, testable units
 (`calculateZoneMinutes`, the `ZoneMinutes` subscript, `TimePeriod.startDate`, and
 the cache diff/invalidation logic).
+
+The Zone 1 filter refactor incidentally cleared two of those review items — the
+`Array(zones.enumerated())` violation and `zones` not being `static let` — by
+rewriting `ZoneChartView`'s row loop. The force-unwraps, type placement,
+hardcoded frame widths, and no-tests gaps remain open. The filter's new
+`visibleZones`, `visibleTotal`, and `zoneLimit(for:)` logic is pure and would be
+straightforward to cover once a test target exists.
