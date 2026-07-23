@@ -11,8 +11,9 @@ struct ZoneChartView: View {
     let zoneMinutes: ZoneMinutes
     let maxHeartRate: Double
     let restingHeartRate: Double
+    let hideZone1: Bool
 
-    private let zones: [(Int, String, Color)] = [
+    private static let zones: [(number: Int, name: String, color: Color)] = [
         (1, "Recovery", .gray),
         (2, "Aerobic Base", .blue),
         (3, "Tempo", .green),
@@ -20,33 +21,42 @@ struct ZoneChartView: View {
         (5, "Max Effort", .red)
     ]
 
-    private var maxZoneMinutes: Double {
-        [zoneMinutes.zone1, zoneMinutes.zone2, zoneMinutes.zone3, zoneMinutes.zone4, zoneMinutes.zone5].max() ?? 1
+    private var visibleZones: [(number: Int, name: String, color: Color)] {
+        hideZone1 ? Self.zones.filter { $0.number != 1 } : Self.zones
     }
 
-    private var zoneLimits: [String] {
+    private var maxZoneMinutes: Double {
+        visibleZones.map { zoneMinutes[$0.number] }.max() ?? 1
+    }
+
+    private var visibleTotal: Double {
+        visibleZones.reduce(0) { $0 + zoneMinutes[$1.number] }
+    }
+
+    private var zoneBoundaries: [Int] {
         let hrr = maxHeartRate - restingHeartRate
-        let b = [0.60, 0.70, 0.80, 0.90].map { Int((restingHeartRate + $0 * hrr).rounded()) }
-        return [
-            "<\(b[0])BPM",
-            "\(b[0])-\(b[1])BPM",
-            "\(b[1])-\(b[2])BPM",
-            "\(b[2])-\(b[3])BPM",
-            "\(b[3])+BPM"
-        ]
+        return [0.60, 0.70, 0.80, 0.90].map { Int((restingHeartRate + $0 * hrr).rounded()) }
+    }
+
+    private func zoneLimit(for number: Int) -> String {
+        let b = zoneBoundaries
+        switch number {
+        case 1:  return "<\(b[0])BPM"
+        case 5:  return "\(b[3])+BPM"
+        default: return "\(b[number - 2])-\(b[number - 1])BPM"
+        }
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            ForEach(Array(zones.enumerated()), id: \.element.0) { index, zoneInfo in
-                let (zone, name, color) = zoneInfo
+            ForEach(visibleZones, id: \.number) { zone in
                 ZoneRowView(
-                    zoneNumber: zone,
-                    zoneName: name,
-                    color: color,
-                    minutes: zoneMinutes[zone],
+                    zoneNumber: zone.number,
+                    zoneName: zone.name,
+                    color: zone.color,
+                    minutes: zoneMinutes[zone.number],
                     maxMinutes: maxZoneMinutes,
-                    zoneLimit: zoneLimits[index]
+                    zoneLimit: zoneLimit(for: zone.number)
                 )
             }
             Divider()
@@ -54,7 +64,7 @@ struct ZoneChartView: View {
                 Text("Total")
                     .font(.subheadline.bold())
                 Spacer()
-                Text(formatTime(zoneMinutes.total))
+                Text(formatTime(visibleTotal))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -62,4 +72,22 @@ struct ZoneChartView: View {
         }
         .padding(.vertical)
     }
+}
+
+#Preview("All zones") {
+    ZoneChartView(
+        zoneMinutes: ZoneMinutes(zone1: 180, zone2: 90, zone3: 45, zone4: 20, zone5: 8),
+        maxHeartRate: 190,
+        restingHeartRate: 60,
+        hideZone1: false
+    )
+}
+
+#Preview("Zone 1 hidden") {
+    ZoneChartView(
+        zoneMinutes: ZoneMinutes(zone1: 180, zone2: 90, zone3: 45, zone4: 20, zone5: 8),
+        maxHeartRate: 190,
+        restingHeartRate: 60,
+        hideZone1: true
+    )
 }

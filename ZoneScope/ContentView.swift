@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var healthKit = HealthKitManager()
     @State private var selectedPeriod: TimePeriod = .week
+    @AppStorage("hideZone1") private var hideZone1 = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -40,7 +41,8 @@ struct ContentView: View {
                     ZoneChartView(
                         zoneMinutes: zoneMinutes,
                         maxHeartRate: healthKit.maxHeartRate,
-                        restingHeartRate: healthKit.restingHeartRate
+                        restingHeartRate: healthKit.restingHeartRate,
+                        hideZone1: hideZone1
                     )
                 } else {
                     ContentUnavailableView(
@@ -53,6 +55,17 @@ struct ContentView: View {
                 Spacer()
             }
             .navigationTitle("ZoneScope")
+            .toolbar {
+                if healthKit.authorized {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Toggle("Hide Zone 1 (Recovery)", isOn: $hideZone1)
+                        } label: {
+                            Label("Options", systemImage: "slider.horizontal.3")
+                        }
+                    }
+                }
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active, healthKit.authorized else { return }
                 if let last = healthKit.lastFetchDate,
