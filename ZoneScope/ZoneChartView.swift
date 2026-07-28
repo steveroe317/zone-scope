@@ -11,19 +11,7 @@ struct ZoneChartView: View {
     let zoneMinutes: ZoneMinutes
     let maxHeartRate: Double
     let restingHeartRate: Double
-    let hideZone1: Bool
-
-    private static let zones: [(number: Int, name: String, color: Color)] = [
-        (1, "Recovery", .gray),
-        (2, "Aerobic Base", .blue),
-        (3, "Tempo", .green),
-        (4, "Threshold", .orange),
-        (5, "Max Effort", .red)
-    ]
-
-    private var visibleZones: [(number: Int, name: String, color: Color)] {
-        hideZone1 ? Self.zones.filter { $0.number != 1 } : Self.zones
-    }
+    let visibleZones: [Zone]
 
     private var maxZoneMinutes: Double {
         visibleZones.map { zoneMinutes[$0.number] }.max() ?? 1
@@ -49,7 +37,7 @@ struct ZoneChartView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            ForEach(visibleZones, id: \.number) { zone in
+            ForEach(visibleZones) { zone in
                 ZoneRowView(
                     zoneNumber: zone.number,
                     zoneName: zone.name,
@@ -79,15 +67,15 @@ struct ZoneChartView: View {
         zoneMinutes: ZoneMinutes(zone1: 180, zone2: 90, zone3: 45, zone4: 20, zone5: 8),
         maxHeartRate: 190,
         restingHeartRate: 60,
-        hideZone1: false
+        visibleZones: Zone.all
     )
 }
 
-#Preview("Zone 1 hidden") {
+#Preview("Subset of zones") {
     ZoneChartView(
         zoneMinutes: ZoneMinutes(zone1: 180, zone2: 90, zone3: 45, zone4: 20, zone5: 8),
         maxHeartRate: 190,
         restingHeartRate: 60,
-        hideZone1: true
+        visibleZones: Zone.all.filter { $0.number != 1 && $0.number != 3 }
     )
 }

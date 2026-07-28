@@ -9,16 +9,27 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var healthKit = HealthKitManager()
-    @State private var selectedPeriod: TimePeriod = .week
-    @AppStorage("hideZone1") private var hideZone1 = false
+    @State private var selectedMode: DisplayMode = .week
+    @AppStorage("zoneVisibility") private var zoneVisibility = ZoneVisibility.all
     @Environment(\.scenePhase) private var scenePhase
+
+    private var visibleZones: [Zone] {
+        Zone.all.filter { zoneVisibility.isVisible($0.number) }
+    }
+
+    private func visibilityBinding(for number: Int) -> Binding<Bool> {
+        Binding(
+            get: { zoneVisibility.isVisible(number) },
+            set: { zoneVisibility.setVisible(number, $0) }
+        )
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                Picker("Period", selection: $selectedPeriod) {
-                    ForEach(TimePeriod.allCases) { period in
-                        Text(period.rawValue).tag(period)
+                Picker("Display", selection: $selectedMode) {
+                    ForEach(DisplayMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -37,19 +48,27 @@ struct ContentView: View {
                 } else if healthKit.isLoading {
                     ProgressView("Loading zone data…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let zoneMinutes = healthKit.zoneData[selectedPeriod], zoneMinutes.total > 0 {
-                    ZoneChartView(
-                        zoneMinutes: zoneMinutes,
-                        maxHeartRate: healthKit.maxHeartRate,
-                        restingHeartRate: healthKit.restingHeartRate,
-                        hideZone1: hideZone1
-                    )
                 } else {
-                    ContentUnavailableView(
-                        "No Workout Data",
-                        systemImage: "figure.run",
-                        description: Text("No workouts with heart rate data found for this period.")
-                    )
+                    switch selectedMode {
+                    case .history:
+                        if healthKit.weeklyHistory.contains(where: { $0.zoneMinutes.total > 0 }) {
+                            WeeklyHistoryView(weeks: healthKit.weeklyHistory, visibleZones: visibleZones)
+                        } else {
+                            NoWorkoutDataView()
+                        }
+                    case .day, .week:
+                        if let period = selectedMode.aggregatePeriod,
+                           let zoneMinutes = healthKit.zoneData[period], zoneMinutes.total > 0 {
+                            ZoneChartView(
+                                zoneMinutes: zoneMinutes,
+                                maxHeartRate: healthKit.maxHeartRate,
+                                restingHeartRate: healthKit.restingHeartRate,
+                                visibleZones: visibleZones
+                            )
+                        } else {
+                            NoWorkoutDataView()
+                        }
+                    }
                 }
 
                 Spacer()
@@ -59,10 +78,21 @@ struct ContentView: View {
                 if healthKit.authorized {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            Toggle("Hide Zone 1 (Recovery)", isOn: $hideZone1)
+                            ForEach(Zone.all) { zone in
+                                Toggle(isOn: visibilityBinding(for: zone.number)) {
+                                    Text("Zone \(zone.number) · \(zone.name)")
+                                }
+                                .disabled(zoneVisibility.isLocked(zone.number))
+                            }
+                            Divider()
+                            Button("Show All Zones", systemImage: "arrow.counterclockwise") {
+                                zoneVisibility = .all
+                            }
+                            .disabled(zoneVisibility.isAllVisible)
                         } label: {
-                            Label("Options", systemImage: "slider.horizontal.3")
+                            Label("Zones", systemImage: "slider.horizontal.3")
                         }
+                        .menuActionDismissBehavior(.disabled)
                     }
                 }
             }

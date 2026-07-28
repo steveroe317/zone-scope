@@ -8,51 +8,6 @@
 import Foundation
 import HealthKit
 
-enum TimePeriod: String, CaseIterable, Identifiable {
-    case day = "Day"
-    case week = "Week"
-    case month = "Month"
-    case year = "Year"
-
-    var id: String { rawValue }
-
-    var startDate: Date {
-        let calendar = Calendar.current
-        let now = Date()
-        switch self {
-        case .day:
-            return calendar.startOfDay(for: now)
-        case .week:
-            return calendar.date(byAdding: .day, value: -7, to: now)!
-        case .month:
-            return calendar.date(byAdding: .month, value: -1, to: now)!
-        case .year:
-            return calendar.date(byAdding: .year, value: -1, to: now)!
-        }
-    }
-}
-
-struct ZoneMinutes {
-    var zone1: Double = 0
-    var zone2: Double = 0
-    var zone3: Double = 0
-    var zone4: Double = 0
-    var zone5: Double = 0
-
-    var total: Double { zone1 + zone2 + zone3 + zone4 + zone5 }
-
-    subscript(zone: Int) -> Double {
-        switch zone {
-        case 1: return zone1
-        case 2: return zone2
-        case 3: return zone3
-        case 4: return zone4
-        case 5: return zone5
-        default: return 0
-        }
-    }
-}
-
 private struct CachedWorkout {
     let uuid: UUID
     let startDate: Date
@@ -67,6 +22,7 @@ final class HealthKitManager {
     var authorized = false
     var isLoading = false
     var zoneData: [TimePeriod: ZoneMinutes] = [:]
+    var weeklyHistory: [WeeklyZoneData] = []
     private(set) var lastFetchDate: Date?
 
     private let healthStore = HKHealthStore()
@@ -76,6 +32,16 @@ final class HealthKitManager {
 
     private var workoutCache: [UUID: CachedWorkout] = [:]
     private let hrParamTolerance: Double = 0.5
+
+    /// Number of weeks of history fetched and shown in the weekly view.
+    static let historyWeeks = 52
+
+    /// Start of the earliest week included in the fetch/history window.
+    private var historyStartDate: Date {
+        let calendar = Calendar.current
+        let earliest = calendar.date(byAdding: .weekOfYear, value: -(Self.historyWeeks - 1), to: Date()) ?? Date()
+        return calendar.dateInterval(of: .weekOfYear, for: earliest)?.start ?? earliest
+    }
 
     var isHealthKitAvailable: Bool {
         HKHealthStore.isHealthDataAvailable()
@@ -160,8 +126,8 @@ final class HealthKitManager {
         isLoading = true
         defer { isLoading = false }
 
-        // Step 1: fetch workout metadata for year window — 1 query, no HR data
-        let currentWorkouts = await fetchWorkoutObjects(since: TimePeriod.year.startDate)
+        // Step 1: fetch workout metadata for the history window — 1 query, no HR data
+        let currentWorkouts = await fetchWorkoutObjects(since: historyStartDate)
 
         // Step 2: diff UUIDs
         let currentIDs = Set(currentWorkouts.map { $0.uuid })
@@ -205,8 +171,9 @@ final class HealthKitManager {
             )
         }
 
-        // Step 7: recompute period totals from cache — no HealthKit queries
+        // Step 7: recompute period totals and weekly history from cache — no HealthKit queries
         zoneData = recomputeZoneData()
+        weeklyHistory = recomputeWeeklyHistory()
     }
 
     private func fetchWorkoutObjects(since startDate: Date) async -> [HKWorkout] {
@@ -234,15 +201,34 @@ final class HealthKitManager {
             let windowStart = period.startDate
             var total = ZoneMinutes()
             for entry in workoutCache.values where entry.startDate >= windowStart {
-                total.zone1 += entry.zoneMinutes.zone1
-                total.zone2 += entry.zoneMinutes.zone2
-                total.zone3 += entry.zoneMinutes.zone3
-                total.zone4 += entry.zoneMinutes.zone4
-                total.zone5 += entry.zoneMinutes.zone5
+                total += entry.zoneMinutes
             }
             result[period] = total
         }
         return result
+    }
+
+    /// Buckets cached workouts into contiguous calendar weeks across the history window,
+    /// including empty weeks so the timeline has no gaps.
+    private func recomputeWeeklyHistory() -> [WeeklyZoneData] {
+        let calendar = Calendar.current
+        let now = Date()
+        let start = historyStartDate
+
+        // Number of week buckets from the history start through the current week.
+        let weekSpan = calendar.dateComponents([.weekOfYear], from: start, to: now).weekOfYear ?? 0
+        let weekStarts: [Date] = (0...max(0, weekSpan)).compactMap {
+            calendar.date(byAdding: .weekOfYear, value: $0, to: start)
+        }
+
+        var buckets: [Date: ZoneMinutes] = Dictionary(uniqueKeysWithValues: weekStarts.map { ($0, ZoneMinutes()) })
+        for entry in workoutCache.values {
+            guard let weekStart = calendar.dateInterval(of: .weekOfYear, for: entry.startDate)?.start,
+                  buckets[weekStart] != nil else { continue }
+            buckets[weekStart]? += entry.zoneMinutes
+        }
+
+        return weekStarts.map { WeeklyZoneData(weekStart: $0, zoneMinutes: buckets[$0] ?? ZoneMinutes()) }
     }
 
     private func fetchHRZoneMinutes(for workout: HKWorkout) async -> ZoneMinutes {
