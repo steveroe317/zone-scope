@@ -132,7 +132,10 @@ iOSInjectionProject/
 ### SwiftPackageManager ###
 Packages
 xcuserdata
-*.xcodeproj
+# NOTE: The blanket `*.xcodeproj` ignore from this generated template was removed.
+# This is a normal app project (not an SPM-generated .xcodeproj), so project.pbxproj
+# and xcshareddata/ must be tracked — see the "Xcode Patch" section below, whose
+# re-include rules that line was overriding. xcuserdata/ stays ignored.
 
 
 ### Xcode ###
