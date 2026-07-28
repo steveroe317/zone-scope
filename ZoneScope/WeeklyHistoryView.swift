@@ -15,8 +15,8 @@ struct WeeklyHistoryView: View {
     /// Number of weeks shown at once before scrolling is required.
     private let visibleWeeks = 12
 
-    /// Approximate width a dated axis label ("Mar 10") needs to avoid overlap.
-    private let minLabelWidth: CGFloat = 64
+    /// Approximate width a two-line date label ("Mar" / "10") needs to avoid overlap.
+    private let minLabelWidth: CGFloat = 30
 
     @State private var chartWidth: CGFloat = 0
 
@@ -25,6 +25,16 @@ struct WeeklyHistoryView: View {
         guard chartWidth > 0 else { return 1 }
         let maxLabels = max(2, Int(chartWidth / minLabelWidth))
         return max(1, Int((Double(visibleWeeks) / Double(maxLabels)).rounded(.up)))
+    }
+
+    /// The month name is shown only on the first labeled week of its month; later
+    /// labels in the same month blank the month line to keep the days aligned.
+    private func showsMonth(for date: Date) -> Bool {
+        let calendar = Calendar.current
+        guard let previousLabeled = calendar.date(byAdding: .weekOfYear, value: -labelStride, to: date) else {
+            return true
+        }
+        return !calendar.isDate(previousLabeled, equalTo: date, toGranularity: .month)
     }
 
     /// Anchors the initial scroll position so the most recent weeks are visible.
@@ -55,8 +65,18 @@ struct WeeklyHistoryView: View {
             AxisMarks(values: .stride(by: .weekOfYear)) { _ in
                 AxisGridLine()
             }
-            AxisMarks(values: .stride(by: .weekOfYear, count: labelStride)) { _ in
-                AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+            AxisMarks(values: .stride(by: .weekOfYear, count: labelStride)) { value in
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(centered: true) {
+                        VStack(spacing: 0) {
+                            Text(date, format: .dateTime.month(.abbreviated))
+                                .foregroundStyle(.primary)
+                                .bold()
+                                .opacity(showsMonth(for: date) ? 1 : 0)
+                            Text(date, format: .dateTime.day())
+                        }
+                    }
+                }
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { chartWidth = $0 }
