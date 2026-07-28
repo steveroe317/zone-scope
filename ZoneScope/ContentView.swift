@@ -41,32 +41,40 @@ struct ContentView: View {
                         systemImage: "heart.slash",
                         description: Text("HealthKit is not available on this device.")
                     )
-                } else if !healthKit.authorized {
-                    AuthPromptView {
-                        Task { await healthKit.requestAuthorization() }
-                    }
-                } else if healthKit.isLoading {
-                    ProgressView("Loading zone data…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    switch selectedMode {
-                    case .history:
-                        if healthKit.weeklyHistory.contains(where: { $0.zoneMinutes.total > 0 }) {
-                            WeeklyHistoryView(weeks: healthKit.weeklyHistory, visibleZones: visibleZones)
-                        } else {
-                            NoWorkoutDataView()
+                    switch healthKit.accessPhase {
+                    case .determining:
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .needsAuthorization:
+                        AuthPromptView {
+                            Task { await healthKit.requestAuthorization() }
                         }
-                    case .day, .week:
-                        if let period = selectedMode.aggregatePeriod,
-                           let zoneMinutes = healthKit.zoneData[period], zoneMinutes.total > 0 {
-                            ZoneChartView(
-                                zoneMinutes: zoneMinutes,
-                                maxHeartRate: healthKit.maxHeartRate,
-                                restingHeartRate: healthKit.restingHeartRate,
-                                visibleZones: visibleZones
-                            )
+                    case .ready:
+                        if healthKit.isLoading || healthKit.lastFetchDate == nil {
+                            ProgressView("Loading zone data…")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            NoWorkoutDataView()
+                            switch selectedMode {
+                            case .history:
+                                if healthKit.weeklyHistory.contains(where: { $0.zoneMinutes.total > 0 }) {
+                                    WeeklyHistoryView(weeks: healthKit.weeklyHistory, visibleZones: visibleZones)
+                                } else {
+                                    NoWorkoutDataView()
+                                }
+                            case .day, .week:
+                                if let period = selectedMode.aggregatePeriod,
+                                   let zoneMinutes = healthKit.zoneData[period], zoneMinutes.total > 0 {
+                                    ZoneChartView(
+                                        zoneMinutes: zoneMinutes,
+                                        maxHeartRate: healthKit.maxHeartRate,
+                                        restingHeartRate: healthKit.restingHeartRate,
+                                        visibleZones: visibleZones
+                                    )
+                                } else {
+                                    NoWorkoutDataView()
+                                }
+                            }
                         }
                     }
                 }
@@ -75,7 +83,7 @@ struct ContentView: View {
             }
             .navigationTitle("ZoneScope")
             .toolbar {
-                if healthKit.authorized {
+                if healthKit.accessPhase == .ready {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             ForEach(Zone.all) { zone in
@@ -97,16 +105,14 @@ struct ContentView: View {
                 }
             }
             .onChange(of: scenePhase) { _, newPhase in
-                guard newPhase == .active, healthKit.authorized else { return }
+                guard newPhase == .active, healthKit.accessPhase == .ready else { return }
                 if let last = healthKit.lastFetchDate,
                    Date().timeIntervalSince(last) > 15 * 60 {
                     Task { await healthKit.fetchAllZoneData() }
                 }
             }
             .task {
-                if healthKit.authorized {
-                    await healthKit.fetchAllZoneData()
-                }
+                await healthKit.start()
             }
         }
     }

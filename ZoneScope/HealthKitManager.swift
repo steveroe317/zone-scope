@@ -17,9 +17,15 @@ private struct CachedWorkout {
     let cachedWithRestingHR: Double
 }
 
+enum AccessPhase {
+    case determining
+    case needsAuthorization
+    case ready
+}
+
 @MainActor @Observable
 final class HealthKitManager {
-    var authorized = false
+    var accessPhase: AccessPhase = .determining
     var isLoading = false
     var zoneData: [TimePeriod: ZoneMinutes] = [:]
     var weeklyHistory: [WeeklyZoneData] = []
@@ -47,26 +53,59 @@ final class HealthKitManager {
         HKHealthStore.isHealthDataAvailable()
     }
 
-    func requestAuthorization() async {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
-
-        let typesToRead: Set<HKObjectType> = [
+    private var typesToRead: Set<HKObjectType> {
+        [
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
             HKObjectType.quantityType(forIdentifier: .restingHeartRate)!,
             HKObjectType.workoutType(),
             HKObjectType.characteristicType(forIdentifier: .dateOfBirth)!
         ]
+    }
 
+    /// Called on launch. HealthKit authorization persists across sessions, so if
+    /// the user was already asked in a prior session we skip the prompt entirely
+    /// and load data immediately; otherwise we surface the explainer.
+    func start() async {
+        guard isHealthKitAvailable else {
+            accessPhase = .needsAuthorization
+            return
+        }
+        if await requestStatus() == .unnecessary {
+            await activate()
+        } else {
+            accessPhase = .needsAuthorization
+        }
+    }
+
+    /// Whether the system would present an authorization prompt for our types.
+    /// Note: this never reveals whether read access was *granted* — Apple hides
+    /// read authorization for privacy — only whether a request is still needed.
+    private func requestStatus() async -> HKAuthorizationRequestStatus {
+        await withCheckedContinuation { continuation in
+            healthStore.getRequestStatusForAuthorization(toShare: [], read: typesToRead) { status, _ in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    func requestAuthorization() async {
+        guard isHealthKitAvailable else { return }
         do {
             try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
-            authorized = true
-            loadMaxHeartRate()
-            await loadRestingHeartRate()
-            startObservingWorkouts()
-            await fetchAllZoneData()
+            await activate()
         } catch {
-            authorized = false
+            accessPhase = .needsAuthorization
         }
+    }
+
+    /// Shared post-authorization setup: load HR parameters, start observing, and
+    /// fetch. Used both after a fresh grant and when access already persisted.
+    private func activate() async {
+        accessPhase = .ready
+        loadMaxHeartRate()
+        await loadRestingHeartRate()
+        startObservingWorkouts()
+        await fetchAllZoneData()
     }
 
     private func loadMaxHeartRate() {

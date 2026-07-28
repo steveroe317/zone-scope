@@ -99,7 +99,7 @@ project's style guidelines):
   mutually exclusive UI states (see State machine below). Also owns the
   `@AppStorage("zoneVisibility")` preference, derives the visible `[Zone]` list
   passed to the chart views, and exposes the per-zone toggles (plus a "Show All
-  Zones" reset) through a toolbar `Menu` (shown only when authorized).
+  Zones" reset) through a toolbar `Menu` (shown only when `accessPhase == .ready`).
 - **`AuthPromptView`** — pure presentational empty state; takes an `action`
   closure invoked when the user taps "Grant Access."
 - **`ZoneChartView`** — the Day/Week aggregate view. Receives a `ZoneMinutes`
@@ -125,13 +125,15 @@ receive plain value types, which keeps them trivially previewable and testable.
 
 ### State machine (`ContentView`)
 
-`ContentView` renders exactly one of these branches, checked in order:
+`ContentView` first shows `ContentUnavailableView` ("HealthKit Unavailable") when
+HealthKit is unavailable; otherwise it renders on `HealthKitManager.accessPhase`:
 
-1. **HealthKit unavailable** → `ContentUnavailableView` ("HealthKit Unavailable")
-2. **Not authorized** → `AuthPromptView` (tapping triggers
-   `requestAuthorization()`)
-3. **Loading** → `ProgressView`
-4. **Authorized & loaded** → `switch selectedMode`:
+1. **`.determining`** → `ProgressView` (the brief launch check; avoids flashing the
+   auth explainer for a returning user).
+2. **`.needsAuthorization`** → `AuthPromptView` (tapping triggers
+   `requestAuthorization()`).
+3. **`.ready`** → `ProgressView` while the first fetch is pending
+   (`isLoading || lastFetchDate == nil`), then `switch selectedMode`:
    - **`.day` / `.week`** → if `zoneData[period].total > 0`, `ZoneChartView`;
      else `NoWorkoutDataView`.
    - **`.history`** → if any week in `weeklyHistory` has a non-zero total,
@@ -140,26 +142,41 @@ receive plain value types, which keeps them trivially previewable and testable.
 The Day/Week data-present check keys on the *full* `zoneMinutes.total`, not the
 filtered total, so a user whose only data is Zone 1 still lands on the chart
 (with empty 2–5 bars and a 0:00 visible total) rather than the "No Workout Data"
-state. The options toolbar menu holding the Zone 1 toggle appears whenever
-`authorized`, regardless of which branch is showing.
+state. The options toolbar menu appears whenever `accessPhase == .ready`,
+regardless of which branch is showing.
 
 ### Authorization and data-load flow
 
+HealthKit authorization **persists across sessions** at the OS level, so ZoneScope
+never re-prompts a returning user. On launch `ContentView.task` calls `start()`:
+
 ```
-User taps "Grant Access"
-        │
-        ▼
-requestAuthorization()
-        │  requests read access: heartRate, restingHeartRate,
-        │  workoutType, dateOfBirth
-        ├─► loadMaxHeartRate()        (220 − age, from date of birth)
-        ├─► loadRestingHeartRate()    (most recent restingHeartRate sample)
-        ├─► startObservingWorkouts()  (HKObserverQuery on workoutType)
-        └─► fetchAllZoneData()
+start()  (on launch)
+   │  getRequestStatusForAuthorization(toShare: [], read: …)
+   ├─ .unnecessary  (asked in a prior session) ─► activate()
+   └─ .shouldRequest / .unknown ─► accessPhase = .needsAuthorization
+                                    (show AuthPromptView; "Grant Access" →
+                                     requestAuthorization() → activate())
+
+activate()   (shared post-authorization setup)
+   ├─► accessPhase = .ready
+   ├─► loadMaxHeartRate()        (220 − age, from date of birth)
+   ├─► loadRestingHeartRate()    (most recent restingHeartRate sample)
+   ├─► startObservingWorkouts()  (HKObserverQuery on workoutType)
+   └─► fetchAllZoneData()
 ```
 
-`maxHeartRate` defaults to 190 and `restingHeartRate` to 60 when the underlying
-data is unavailable.
+The read types are `heartRate`, `restingHeartRate`, `workoutType`, and
+`dateOfBirth`. `maxHeartRate` defaults to 190 and `restingHeartRate` to 60 when
+the underlying data is unavailable.
+
+The app stores **no** authorization token of its own. Apple deliberately hides
+*read* authorization (`authorizationStatus(for:)` reports "denied" even when
+granted), so `getRequestStatusForAuthorization` — which only reports whether a
+prompt is still needed, never the grant result — is the correct API. A returning
+user who previously *denied* access is `.unnecessary` too: `activate()` runs, the
+queries return nothing, and the app shows the ordinary "No Workout Data" state
+(denied and genuinely-empty are indistinguishable by design).
 
 ### The zone-data pipeline (`fetchAllZoneData`)
 
@@ -231,13 +248,13 @@ draws only the visible segments (and legend entries) in every weekly bar.
 
 Data is refreshed on three occasions:
 
-- **On appear** — `ContentView.task` calls `fetchAllZoneData()` if already
-  authorized.
+- **On appear** — `ContentView.task` calls `start()`, which activates and fetches
+  when access already persisted.
 - **On workout changes** — an `HKObserverQuery` fires `fetchAllZoneData()`
   whenever HealthKit reports new/changed workouts.
 - **On foreground** — `onChange(of: scenePhase)` refetches when the app becomes
-  active, but only if authorized and the last fetch was more than 15 minutes ago
-  (throttling).
+  active, but only if `accessPhase == .ready` and the last fetch was more than 15
+  minutes ago (throttling).
 
 Because both the aggregate totals and the weekly history are recomputed from the
 cache, switching the segmented `DisplayMode` picker (Day / Week / History) is
@@ -272,8 +289,8 @@ instantaneous and triggers no HealthKit access.
   provide, which gives full control over the boundary definitions but ties
   accuracy to the max/resting HR estimates.
 - **No error surfacing.** Failures in authorization or queries are swallowed
-  (e.g., `authorized = false`, empty results); there is no user-facing error
-  state beyond the "unavailable"/"no data" empty states.
+  (e.g., `accessPhase = .needsAuthorization`, empty results); there is no
+  user-facing error state beyond the "unavailable"/"no data" empty states.
 - **Read-only entitlement.** The entitlements request HealthKit read access only
   (`toShare: []`), matching the `NSHealthShareUsageDescription` string.
 
