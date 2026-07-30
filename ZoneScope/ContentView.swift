@@ -82,6 +82,7 @@ struct ContentView: View {
                 Spacer()
             }
             .navigationTitle("ZoneScope")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if healthKit.accessPhase == .ready {
                     ToolbarItem(placement: .topBarTrailing) {
