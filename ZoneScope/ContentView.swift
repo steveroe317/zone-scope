@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var healthKit = HealthKitManager()
     @State private var selectedMode: DisplayMode = .week
+    @State private var showingAbout = false
     @AppStorage("zoneVisibility") private var zoneVisibility = ZoneVisibility.all
     @Environment(\.scenePhase) private var scenePhase
 
@@ -83,7 +84,15 @@ struct ContentView: View {
             }
             .navigationTitle("ZoneScope")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showingAbout) {
+                AboutView()
+            }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("About", systemImage: "info.circle") {
+                        showingAbout = true
+                    }
+                }
                 if healthKit.accessPhase == .ready {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {

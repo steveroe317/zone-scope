@@ -29,8 +29,10 @@ only a single UI preference (which zones are visible) via `@AppStorage`.
 ZoneScope/
 ├── ZoneScope/                     # App source
 │   ├── ZoneScopeApp.swift         # @main entry point / WindowGroup
-│   ├── ContentView.swift          # Root view: mode picker, state routing, options menu
+│   ├── ContentView.swift          # Root view: mode picker, state routing, options menu, About
 │   ├── AuthPromptView.swift       # Empty-state view prompting HealthKit access
+│   ├── AboutView.swift            # About sheet (intro, features, privacy, version)
+│   ├── AboutFeatureRow.swift      # One capability row in the About sheet
 │   ├── ZoneChartView.swift        # Day/Week aggregate: four or five zone rows + total
 │   ├── ZoneRowView.swift          # One zone's bar + labels
 │   ├── WeeklyHistoryView.swift    # History mode: Swift Charts stacked bar per week
@@ -99,9 +101,15 @@ project's style guidelines):
   mutually exclusive UI states (see State machine below). Also owns the
   `@AppStorage("zoneVisibility")` preference, derives the visible `[Zone]` list
   passed to the chart views, and exposes the per-zone toggles (plus a "Show All
-  Zones" reset) through a toolbar `Menu` (shown only when `accessPhase == .ready`).
+  Zones" reset) through a trailing toolbar `Menu` (shown only when
+  `accessPhase == .ready`). A leading `info.circle` toolbar button — shown always,
+  independent of `accessPhase` — presents the `AboutView` sheet.
 - **`AuthPromptView`** — pure presentational empty state; takes an `action`
   closure invoked when the user taps "Grant Access."
+- **`AboutView`** — a sheet (grouped `List`) with the app intro, a Features list
+  (built from `AboutFeatureRow`s), how zones are calculated, a privacy note, the
+  experimental/Claude Code note, and the bundle version. Depends on no HealthKit
+  data, so it's fully previewable and Simulator-testable.
 - **`ZoneChartView`** — the Day/Week aggregate view. Receives a `ZoneMinutes`
   value, HR parameters, and the visible `[Zone]` list. Renormalizes bar widths to
   the max of the *visible* zones and shows a total summed over only those zones.
@@ -142,8 +150,9 @@ HealthKit is unavailable; otherwise it renders on `HealthKitManager.accessPhase`
 The Day/Week data-present check keys on the *full* `zoneMinutes.total`, not the
 filtered total, so a user whose only data is Zone 1 still lands on the chart
 (with empty 2–5 bars and a 0:00 visible total) rather than the "No Workout Data"
-state. The options toolbar menu appears whenever `accessPhase == .ready`,
-regardless of which branch is showing.
+state. The trailing options toolbar menu appears whenever `accessPhase == .ready`,
+regardless of which branch is showing; the leading About (`info.circle`) button is
+present in every phase, since it depends on no HealthKit state.
 
 ### Authorization and data-load flow
 
