@@ -40,7 +40,7 @@ ZoneScope/
 │   ├── AdaptiveSplitView.swift    # Portrait-stacked / landscape-side-by-side layout
 │   ├── ZoneChartView.swift        # A period's breakdown: four or five zone rows + total
 │   ├── ZoneRowView.swift          # One zone's bar + labels
-│   ├── WeekZoneChart.swift        # Weekly card's 7-day (Mon–Sun) stacked bar chart
+│   ├── ZoneBarChart.swift         # Shared card chart: 7-day (week) or 24-hour (day) bars
 │   ├── TrendsView.swift           # Trends mode: daily/weekly chart selection
 │   ├── ZoneHistoryChart.swift     # Shared Trends chart: stacked bar per day or week
 │   ├── ZoneHistoryPoint.swift     # Protocol the period series conform to
@@ -52,7 +52,8 @@ ZoneScope/
 │   ├── Zone.swift                 # Shared zone metadata (number / name / color)
 │   ├── ZoneVisibility.swift       # Persisted set of visible zones (bitmask)
 │   ├── WeeklyZoneData.swift       # One week's ZoneMinutes keyed by week start
-│   ├── DailyZoneData.swift        # One day's ZoneMinutes keyed by day start
+│   ├── DailyZoneData.swift        # One day's ZoneMinutes + 24 hours, keyed by day start
+│   ├── HourlyZoneData.swift       # One clock hour's ZoneMinutes keyed by hour start
 │   ├── Calendar+ZoneScope.swift   # Monday-first calendar (Calendar.zoneScope)
 │   ├── TimeFormatting.swift       # formatTime() free function
 │   ├── ZoneScope.entitlements     # HealthKit entitlement
@@ -92,19 +93,24 @@ model class and its file-private cache entry:
   future days empty) for the weekly card's per-day chart; the element type of the
   weekly series (Week carousel and weekly Trends).
 - **`DailyZoneData`** (`DailyZoneData.swift`) — one day's `ZoneMinutes` keyed by
-  that day's start date; the element type of the daily series (Day carousel and
-  daily Trends).
+  that day's start date, plus `hours` (its 24 `HourlyZoneData`, 00:00–23:00, empty
+  hours zero) for the day card's per-hour chart; the element type of the daily series
+  (Day carousel and daily Trends).
+- **`HourlyZoneData`** (`HourlyZoneData.swift`) — one clock hour's `ZoneMinutes` keyed
+  by that hour's start date; the element type of a day's per-hour chart.
 - **`ZoneHistoryPoint`** (`ZoneHistoryPoint.swift`) — a `nonisolated` protocol
-  (`date` + `zoneMinutes`) that both `WeeklyZoneData` and `DailyZoneData` conform
-  to, so one generic chart and one generic carousel render either series.
+  (`date` + `zoneMinutes`) that `WeeklyZoneData`, `DailyZoneData`, and `HourlyZoneData`
+  conform to, so one generic chart and one generic carousel render any series.
 - **`DisplayMode`** (`DisplayMode.swift`) — the picker's selection (`.day`,
   `.week`, `.history`, labeled "Trends").
 - **`TrendGranularity`** (`TrendGranularity.swift`) — the trends bar granularity
   (`.daily`, `.weekly`), `RawRepresentable` as a `String` so the user's choice
   persists in `@AppStorage`.
 - **`CachedWorkout`** (file-private in `HealthKitManager.swift`) — a per-workout
-  cache entry recording the computed `ZoneMinutes` plus the max/resting HR values
-  it was computed with, so the cache can be invalidated when those inputs change.
+  cache entry recording the computed aggregate `ZoneMinutes`, a sample-accurate
+  per-hour map (`hourlyZoneMinutes`, keyed by clock-hour start, for the day chart),
+  and the max/resting HR values it was computed with, so the cache can be invalidated
+  when those inputs change.
 - **`HealthKitManager`** — a `@MainActor @Observable final class` that is the
   single source of truth for authorization state, loading state, the `weeklyHistory`
   and `dailyHistory` series (which feed both the carousels and the Trends charts),
@@ -159,8 +165,8 @@ project's style guidelines):
   equal size, stacking them vertically when its space is taller than wide (portrait)
   and horizontally when wider than tall (landscape), chosen by measured aspect ratio
   (`onGeometryChange`) so it is orientation- and device-agnostic. Collapses to the
-  primary alone when the secondary is `EmptyView`. This is the reusable seam for
-  adding a chart to the Day card later.
+  primary alone when the secondary is `EmptyView`. Pairs each card's summary with its
+  chart.
 - **`ZoneChartView`** — a single period's breakdown, shown inside a card. Receives a
   `ZoneMinutes` value, HR parameters, and the visible `[Zone]` list. Renormalizes
   bar widths to the max of the *visible* zones and shows a total summed over only
@@ -168,11 +174,16 @@ project's style guidelines):
   `zoneLimit(for:)` lookup.
 - **`ZoneRowView`** — renders one zone: name/number, a proportional bar, and the
   minutes/BPM-range labels.
-- **`WeekZoneChart`** — the weekly card's secondary view: a compact Swift Charts
-  stacked `BarMark` chart of the week's seven days (Monday–Sunday) from
-  `WeeklyZoneData.days`, with weekday-initial x labels, no legend, and Monday-first
-  (`.environment(\.calendar, .zoneScope)`). Future/empty days render as zero-height
-  bars under their label. Reuses the shared `Zone` palette.
+- **`ZoneBarChart`** — the shared card secondary view, generic over `ZoneHistoryPoint`
+  and parameterized by a `Calendar.Component`: a compact, non-scrolling Swift Charts
+  stacked `BarMark` chart used by both cards — the week card's seven days
+  (`component: .day`, from `WeeklyZoneData.days`, weekday-initial labels) and the day
+  card's 24 hours (`component: .hour`, from `DailyZoneData.hours`, hour labels every
+  6h: 12A/6A/12P/6P). No legend, Monday-first (`.environment(\.calendar, .zoneScope)`),
+  labels centered on their bars (per-bar mark + `AxisValueLabel(centered:)`, thinned by
+  a `barIndex % labelStride` gate). Empty/future points render as zero-height bars.
+  Not scrollable — it shows every point at once, which also avoids conflicting with the
+  carousel's horizontal page-swipe.
 - **`ZoneHistoryChart`** — the shared Trends chart, generic over `ZoneHistoryPoint`
   and parameterized by a `Calendar.Component` (`.day` or `.weekOfYear`). A Swift
   Charts stacked `BarMark` chart, one bar per component (height = total minutes,
@@ -269,15 +280,19 @@ recompute what actually changed:
    current values by more than `hrParamTolerance` (0.5 BPM).
 5. **Evict** deleted, modified, and invalidated entries from the cache.
 6. **Fetch heart-rate samples and recompute zones** only for the added, modified,
-   and invalidated workouts (`fetchHRZoneMinutes` → `calculateZoneMinutes`).
+   and invalidated workouts (`fetchHRZoneMinutes` → `calculateZoneMinutes`), which
+   returns both the aggregate `ZoneMinutes` and a sample-accurate per-hour map, both
+   cached on `CachedWorkout`.
 7. **Recompute derived views** purely from the in-memory cache — no additional
    HealthKit queries: `recomputeWeeklyHistory()` buckets cached workouts into
    contiguous calendar weeks (`historyWeeks = 52`) to build the `weeklyHistory`
    series — and in the same pass buckets each week's seven days (Monday–Sunday) into
    `WeeklyZoneData.days` for the weekly card's chart — and `recomputeDailyHistory()`
    buckets them into contiguous calendar days (`historyDays = 90`) to build
-   `dailyHistory`. Both include empty buckets so the timelines have no gaps — and both
-   feed the Day/Week carousels as well as the Trends charts.
+   `dailyHistory`, and — from the cached per-hour maps — each day's 24 hours into
+   `DailyZoneData.hours` for the day card's chart. Both include empty buckets so the
+   timelines have no gaps — and both feed the Day/Week carousels as well as the Trends
+   charts.
 
 `isLoading` guards against overlapping runs (early-return if already loading),
 and `lastFetchDate` records the run time to drive throttled refreshes.
@@ -293,6 +308,9 @@ Given time-ordered heart-rate samples for one workout:
   `pct = (hr − restingHR) / (maxHR − restingHR)`.
 - The percentage is bucketed into five zones at boundaries **60% / 70% / 80% /
   90%** (Zone 1 `<60%` … Zone 5 `≥90%`).
+- In the same pass, each sample's minutes are also added to the **clock hour** it
+  started in, producing the workout's sample-accurate `hourlyZoneMinutes` map (the
+  day card's hourly chart) at no extra query cost.
 
 `ZoneChartView` mirrors these same boundaries via its `zoneLimit(for:)` lookup to
 render the human-readable BPM range labels shown next to each zone, and renders

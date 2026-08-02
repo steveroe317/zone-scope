@@ -41,4 +41,16 @@ struct ZoneMinutes {
     static func += (lhs: inout ZoneMinutes, rhs: ZoneMinutes) {
         lhs = lhs + rhs
     }
+
+    /// Adds minutes to the given zone (1–5); out-of-range zones are ignored.
+    mutating func add(_ minutes: Double, toZone zone: Int) {
+        switch zone {
+        case 1: zone1 += minutes
+        case 2: zone2 += minutes
+        case 3: zone3 += minutes
+        case 4: zone4 += minutes
+        case 5: zone5 += minutes
+        default: break
+        }
+    }
 }

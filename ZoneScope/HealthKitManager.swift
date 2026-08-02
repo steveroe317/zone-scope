@@ -13,6 +13,9 @@ private struct CachedWorkout {
     let startDate: Date
     let endDate: Date
     let zoneMinutes: ZoneMinutes
+    /// Sample-accurate zone minutes bucketed by the clock hour each sample fell in,
+    /// keyed by that hour's start date. Feeds the day card's per-hour chart.
+    let hourlyZoneMinutes: [Date: ZoneMinutes]
     let cachedWithMaxHR: Double
     let cachedWithRestingHR: Double
 }
@@ -209,12 +212,13 @@ final class HealthKitManager {
         let idsToFetch      = addedIDs.union(modifiedIDs).union(invalidatedIDs)
         let workoutsToFetch = currentWorkouts.filter { idsToFetch.contains($0.uuid) }
         for workout in workoutsToFetch {
-            let mins = await fetchHRZoneMinutes(for: workout)
+            let zones = await fetchHRZoneMinutes(for: workout)
             workoutCache[workout.uuid] = CachedWorkout(
                 uuid:                workout.uuid,
                 startDate:           workout.startDate,
                 endDate:             workout.endDate,
-                zoneMinutes:         mins,
+                zoneMinutes:         zones.aggregate,
+                hourlyZoneMinutes:   zones.hourly,
                 cachedWithMaxHR:     maxHeartRate,
                 cachedWithRestingHR: restingHeartRate
             )
@@ -287,16 +291,27 @@ final class HealthKitManager {
         }
 
         var buckets: [Date: ZoneMinutes] = Dictionary(uniqueKeysWithValues: dayStarts.map { ($0, ZoneMinutes()) })
+        var hourBuckets: [Date: ZoneMinutes] = [:]
         for entry in workoutCache.values {
             let dayStart = calendar.startOfDay(for: entry.startDate)
-            guard buckets[dayStart] != nil else { continue }
-            buckets[dayStart]? += entry.zoneMinutes
+            if buckets[dayStart] != nil {
+                buckets[dayStart]? += entry.zoneMinutes
+            }
+            for (hourStart, minutes) in entry.hourlyZoneMinutes {
+                hourBuckets[hourStart, default: ZoneMinutes()] += minutes
+            }
         }
 
-        return dayStarts.map { DailyZoneData(dayStart: $0, zoneMinutes: buckets[$0] ?? ZoneMinutes()) }
+        return dayStarts.map { dayStart in
+            let hours = (0..<24).compactMap { hour -> HourlyZoneData? in
+                guard let hourStart = calendar.date(byAdding: .hour, value: hour, to: dayStart) else { return nil }
+                return HourlyZoneData(hourStart: hourStart, zoneMinutes: hourBuckets[hourStart] ?? ZoneMinutes())
+            }
+            return DailyZoneData(dayStart: dayStart, zoneMinutes: buckets[dayStart] ?? ZoneMinutes(), hours: hours)
+        }
     }
 
-    private func fetchHRZoneMinutes(for workout: HKWorkout) async -> ZoneMinutes {
+    private func fetchHRZoneMinutes(for workout: HKWorkout) async -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes]) {
         let predicate = HKQuery.predicateForSamples(
             withStart: workout.startDate,
             end: workout.endDate,
@@ -319,8 +334,12 @@ final class HealthKitManager {
         return calculateZoneMinutes(from: samples, workoutEnd: workout.endDate)
     }
 
-    private func calculateZoneMinutes(from samples: [HKQuantitySample], workoutEnd: Date) -> ZoneMinutes {
-        var result = ZoneMinutes()
+    /// Computes a workout's total zone minutes and, in the same pass, its zone minutes
+    /// bucketed by the clock hour each sample fell in (for the day card's hourly chart).
+    private func calculateZoneMinutes(from samples: [HKQuantitySample], workoutEnd: Date) -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes]) {
+        var aggregate = ZoneMinutes()
+        var hourly: [Date: ZoneMinutes] = [:]
+        let calendar = Calendar.zoneScope
         let beatsPerMinute = HKUnit.count().unitDivided(by: .minute())
 
         for (i, sample) in samples.enumerated() {
@@ -333,18 +352,24 @@ final class HealthKitManager {
             let hrr = maxHeartRate - restingHeartRate
             let pct = (hr - restingHeartRate) / hrr
 
+            let zone: Int
             if pct < 0.60 {
-                result.zone1 += minutes
+                zone = 1
             } else if pct < 0.70 {
-                result.zone2 += minutes
+                zone = 2
             } else if pct < 0.80 {
-                result.zone3 += minutes
+                zone = 3
             } else if pct < 0.90 {
-                result.zone4 += minutes
+                zone = 4
             } else {
-                result.zone5 += minutes
+                zone = 5
+            }
+
+            aggregate.add(minutes, toZone: zone)
+            if let hourStart = calendar.dateInterval(of: .hour, for: sample.startDate)?.start {
+                hourly[hourStart, default: ZoneMinutes()].add(minutes, toZone: zone)
             }
         }
-        return result
+        return (aggregate, hourly)
     }
 }

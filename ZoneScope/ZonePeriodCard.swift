@@ -132,17 +132,29 @@ extension ZonePeriodCard where Detail == EmptyView {
 }
 
 #Preview("Day · data") {
-    ZonePeriodCard(
+    let calendar = Calendar.zoneScope
+    let dayStart = calendar.startOfDay(for: .now)
+    let hours: [HourlyZoneData] = (0..<24).compactMap { hour in
+        guard let hourStart = calendar.date(byAdding: .hour, value: hour, to: dayStart) else { return nil }
+        let minutes = (hour == 7 || hour == 8 || hour == 18)
+            ? ZoneMinutes(zone1: 8, zone2: 20, zone3: 18, zone4: 10, zone5: 4)
+            : ZoneMinutes()
+        return HourlyZoneData(hourStart: hourStart, zoneMinutes: minutes)
+    }
+    return ZonePeriodCard(
         point: DailyZoneData(
-            dayStart: Calendar.current.startOfDay(for: .now),
-            zoneMinutes: ZoneMinutes(zone1: 32, zone2: 24, zone3: 15, zone4: 8, zone5: 3)
+            dayStart: dayStart,
+            zoneMinutes: ZoneMinutes(zone1: 32, zone2: 24, zone3: 15, zone4: 8, zone5: 3),
+            hours: hours
         ),
         component: .day,
         isCurrent: true,
         maxHeartRate: 190,
         restingHeartRate: 60,
         visibleZones: Zone.all
-    )
+    ) { day in
+        ZoneBarChart(points: day.hours, visibleZones: Zone.all, component: .hour)
+    }
 }
 
 #Preview("Day · rest day") {
@@ -183,6 +195,6 @@ extension ZonePeriodCard where Detail == EmptyView {
         restingHeartRate: 60,
         visibleZones: Zone.all
     ) { week in
-        WeekZoneChart(days: week.days, visibleZones: Zone.all)
+        ZoneBarChart(points: week.days, visibleZones: Zone.all, component: .day)
     }
 }

@@ -79,7 +79,9 @@ struct ContentView: View {
                                         maxHeartRate: healthKit.maxHeartRate,
                                         restingHeartRate: healthKit.restingHeartRate,
                                         visibleZones: visibleZones
-                                    )
+                                    ) { day in
+                                        ZoneBarChart(points: day.hours, visibleZones: visibleZones, component: .hour)
+                                    }
                                 case .week:
                                     ZonePeriodCarousel(
                                         points: healthKit.weeklyHistory,
@@ -88,7 +90,7 @@ struct ContentView: View {
                                         restingHeartRate: healthKit.restingHeartRate,
                                         visibleZones: visibleZones
                                     ) { week in
-                                        WeekZoneChart(days: week.days, visibleZones: visibleZones)
+                                        ZoneBarChart(points: week.days, visibleZones: visibleZones, component: .day)
                                     }
                                 }
                             }
