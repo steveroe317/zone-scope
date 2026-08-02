@@ -4,14 +4,15 @@
 
 ZoneScope is a single-screen iOS app that reads a user's workouts and heart-rate
 samples from HealthKit and visualizes how much time they spent in each of five
-heart-rate training zones. A segmented picker offers three modes: two aggregate
-windows (**Day**, **Week**) rendered as a per-zone bar chart, and a **Trends**
-mode showing a stacked-bar time-series at a selectable granularity — one bar per
-day across the past 90 days, or one bar per week across the past year. Each zone can be shown
+heart-rate training zones. A segmented picker offers three modes: **Day** and
+**Week**, each a swipeable carousel of dated cards showing that period's per-zone
+breakdown (page back through previous days/weeks), and a **Trends** mode showing a
+stacked-bar time-series at a selectable granularity — one bar per day across the
+past 90 days, or one bar per week across the past year. Each zone can be shown
 or hidden individually (at least one always visible) to focus on the zones of
 interest. It is a read-only client of Apple Health: it writes nothing back, has
 no network layer, no accounts, and stores no domain data of its own — it persists
-only a single UI preference (which zones are visible) via `@AppStorage`.
+two UI preferences (which zones are visible, and the Trends granularity) via `@AppStorage`.
 
 - **Platform:** iOS 26.2+ (deployment target)
 - **Language / UI:** Swift, SwiftUI, with `@Observable` for shared state
@@ -34,21 +35,23 @@ ZoneScope/
 │   ├── AuthPromptView.swift       # Empty-state view prompting HealthKit access
 │   ├── AboutView.swift            # About sheet (intro, features, privacy, version)
 │   ├── AboutFeatureRow.swift      # One capability row in the About sheet
-│   ├── ZoneChartView.swift        # Day/Week aggregate: four or five zone rows + total
+│   ├── ZonePeriodCarousel.swift   # Day/Week mode: paged carousel of period cards
+│   ├── ZonePeriodCard.swift       # One dated card: header + zone breakdown / rest state
+│   ├── ZoneChartView.swift        # A period's breakdown: four or five zone rows + total
 │   ├── ZoneRowView.swift          # One zone's bar + labels
 │   ├── TrendsView.swift           # Trends mode: daily/weekly chart selection
 │   ├── ZoneHistoryChart.swift     # Shared Trends chart: stacked bar per day or week
-│   ├── ZoneHistoryPoint.swift     # Protocol both trend series conform to
+│   ├── ZoneHistoryPoint.swift     # Protocol the period series conform to
 │   ├── NoWorkoutDataView.swift    # Shared "No Workout Data" empty state
 │   ├── HealthKitManager.swift     # Observable model: HealthKit access + zone math
 │   ├── DisplayMode.swift          # Picker selection: day / week / trends
 │   ├── TrendGranularity.swift     # Trends granularity: daily / weekly
-│   ├── TimePeriod.swift           # Aggregate window (day / week) + startDate
 │   ├── ZoneMinutes.swift          # Per-zone minutes value type (+ summation)
 │   ├── Zone.swift                 # Shared zone metadata (number / name / color)
 │   ├── ZoneVisibility.swift       # Persisted set of visible zones (bitmask)
 │   ├── WeeklyZoneData.swift       # One week's ZoneMinutes keyed by week start
 │   ├── DailyZoneData.swift        # One day's ZoneMinutes keyed by day start
+│   ├── Calendar+ZoneScope.swift   # Monday-first calendar (Calendar.zoneScope)
 │   ├── TimeFormatting.swift       # formatTime() free function
 │   ├── ZoneScope.entitlements     # HealthKit entitlement
 │   └── Assets.xcassets/           # App icon, accent color
@@ -73,8 +76,6 @@ truth, views observe it and render.
 The domain types each live in their own file; `HealthKitManager.swift` holds the
 model class and its file-private cache entry:
 
-- **`TimePeriod`** (`TimePeriod.swift`) — an `enum` (`.day`, `.week`) defining
-  each aggregate query window via its `startDate` computed property.
 - **`ZoneMinutes`** (`ZoneMinutes.swift`) — a value type accumulating minutes
   across the five zones, with a `total`, an integer `subscript(zone:)`, and `+` /
   `+=` operators used to sum entries when aggregating.
@@ -85,15 +86,16 @@ model class and its file-private cache entry:
   `RawRepresentable` as an `Int` bitmask so it persists in `@AppStorage`. Owns the
   "at least one zone visible" invariant (`setVisible`, `isLocked`, `isAllVisible`).
 - **`WeeklyZoneData`** (`WeeklyZoneData.swift`) — one week's `ZoneMinutes` keyed
-  by that week's start date; the element type of the weekly trends series.
+  by that week's start date; the element type of the weekly series (Week carousel
+  and weekly Trends).
 - **`DailyZoneData`** (`DailyZoneData.swift`) — one day's `ZoneMinutes` keyed by
-  that day's start date; the element type of the daily trends series.
+  that day's start date; the element type of the daily series (Day carousel and
+  daily Trends).
 - **`ZoneHistoryPoint`** (`ZoneHistoryPoint.swift`) — a `nonisolated` protocol
   (`date` + `zoneMinutes`) that both `WeeklyZoneData` and `DailyZoneData` conform
-  to, so one generic chart renders either series.
+  to, so one generic chart and one generic carousel render either series.
 - **`DisplayMode`** (`DisplayMode.swift`) — the picker's selection (`.day`,
-  `.week`, `.history`, labeled "Trends"); its `aggregatePeriod` maps day/week to a
-  `TimePeriod` and returns `nil` for the trends time-series.
+  `.week`, `.history`, labeled "Trends").
 - **`TrendGranularity`** (`TrendGranularity.swift`) — the trends bar granularity
   (`.daily`, `.weekly`), `RawRepresentable` as a `String` so the user's choice
   persists in `@AppStorage`.
@@ -101,9 +103,9 @@ model class and its file-private cache entry:
   cache entry recording the computed `ZoneMinutes` plus the max/resting HR values
   it was computed with, so the cache can be invalidated when those inputs change.
 - **`HealthKitManager`** — a `@MainActor @Observable final class` that is the
-  single source of truth for authorization state, loading state, the aggregate
-  `zoneData`, the `weeklyHistory` and `dailyHistory` series, and the HR parameters
-  (`maxHeartRate`, `restingHeartRate`).
+  single source of truth for authorization state, loading state, the `weeklyHistory`
+  and `dailyHistory` series (which feed both the carousels and the Trends charts),
+  and the HR parameters (`maxHeartRate`, `restingHeartRate`).
 
 ### Presentation layer (SwiftUI views)
 
@@ -132,10 +134,25 @@ project's style guidelines):
   (built from `AboutFeatureRow`s), how zones are calculated, a privacy note, the
   experimental/Claude Code note, and the bundle version. Depends on no HealthKit
   data, so it's fully previewable and Simulator-testable.
-- **`ZoneChartView`** — the Day/Week aggregate view. Receives a `ZoneMinutes`
-  value, HR parameters, and the visible `[Zone]` list. Renormalizes bar widths to
-  the max of the *visible* zones and shows a total summed over only those zones.
-  Derives per-zone BPM boundary labels from the HR parameters via a
+- **`ZonePeriodCarousel`** — the Day/Week mode. A horizontally paged carousel
+  (`ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` +
+  `containerRelativeFrame(.horizontal)`) generic over `ZoneHistoryPoint`, fed the
+  day or week series and the matching `Calendar.Component`. Opens on the current
+  period (`.defaultScrollAnchor(.trailing)`) and swipes back in time. Trims
+  **leading** empty periods: the first card is the earliest period with data (or the
+  current period if there is no data at all), so you never swipe through empty
+  history before your first workout. The `containerRelativeFrame` count is the seam
+  for a future iPad multi-card layout.
+- **`ZonePeriodCard`** — one carousel page, generic over `ZoneHistoryPoint`: a
+  dated header (relative "Today"/"This Week"/"Yesterday"/"Last Week", else a date or
+  week range) over the body — `ZoneChartView` when the period has data, a
+  "Rest Day"/"Rest Week" `ContentUnavailableView` for an empty *past* period, or
+  `NoWorkoutDataView` for the empty *current* period. Split out (and card chrome
+  kept separate from the carousel) so an iPad layout can reuse it.
+- **`ZoneChartView`** — a single period's breakdown, shown inside a card. Receives a
+  `ZoneMinutes` value, HR parameters, and the visible `[Zone]` list. Renormalizes
+  bar widths to the max of the *visible* zones and shows a total summed over only
+  those zones. Derives per-zone BPM boundary labels from the HR parameters via a
   `zoneLimit(for:)` lookup.
 - **`ZoneRowView`** — renders one zone: name/number, a proportional bar, and the
   minutes/BPM-range labels.
@@ -174,16 +191,16 @@ HealthKit is unavailable; otherwise it renders on `HealthKitManager.accessPhase`
    `requestAuthorization()`).
 3. **`.ready`** → `ProgressView` while the first fetch is pending
    (`isLoading || lastFetchDate == nil`), then `switch selectedMode`:
-   - **`.day` / `.week`** → if `zoneData[period].total > 0`, `ZoneChartView`;
-     else `NoWorkoutDataView`.
+   - **`.day` / `.week`** → `ZonePeriodCarousel` over `dailyHistory` /
+     `weeklyHistory`; each card owns its own empty state (rest vs. no-data).
    - **`.history`** → `TrendsView` renders a `ZoneHistoryChart` for the selected
      granularity (else `NoWorkoutDataView`), with the Daily/Weekly control pinned
      in `ContentView`'s bottom `safeAreaInset`.
 
-The Day/Week data-present check keys on the *full* `zoneMinutes.total`, not the
-filtered total, so a user whose only data is Zone 1 still lands on the chart
-(with empty 2–5 bars and a 0:00 visible total) rather than the "No Workout Data"
-state. The trailing options toolbar menu appears whenever `accessPhase == .ready`,
+Each card's data-present check keys on the *full* `zoneMinutes.total`, not the
+filtered total, so a period whose only data is Zone 1 still shows the breakdown
+(with empty 2–5 bars and a 0:00 visible total) rather than a rest/no-data state.
+The trailing options toolbar menu appears whenever `accessPhase == .ready`,
 regardless of which branch is showing; the leading About (`info.circle`) button is
 present in every phase, since it depends on no HealthKit state.
 
@@ -237,12 +254,12 @@ recompute what actually changed:
 6. **Fetch heart-rate samples and recompute zones** only for the added, modified,
    and invalidated workouts (`fetchHRZoneMinutes` → `calculateZoneMinutes`).
 7. **Recompute derived views** purely from the in-memory cache — no additional
-   HealthKit queries: `recomputeZoneData()` sums the `.day`/`.week` aggregates,
-   `recomputeWeeklyHistory()` buckets cached workouts into contiguous calendar
-   weeks (`historyWeeks = 52`) to build the `weeklyHistory` series, and
-   `recomputeDailyHistory()` buckets them into contiguous calendar days
+   HealthKit queries: `recomputeWeeklyHistory()` buckets cached workouts into
+   contiguous calendar weeks (`historyWeeks = 52`) to build the `weeklyHistory`
+   series, and `recomputeDailyHistory()` buckets them into contiguous calendar days
    (`historyDays = 90`) to build `dailyHistory`. Both include empty buckets so the
-   timelines have no gaps.
+   timelines have no gaps — and both feed the Day/Week carousels as well as the
+   Trends charts.
 
 `isLoading` guards against overlapping runs (early-return if already loading),
 and `lastFetchDate` records the run time to drive throttled refreshes.
@@ -278,8 +295,8 @@ in the toolbar `Menu`, plus a "Show All Zones" reset. The filter is:
   `isAllVisible`.
 - **Centralized and presentation-layer only.** `ContentView` derives the visible
   `[Zone]` list once (`Zone.all.filter { zoneVisibility.isVisible($0.number) }`)
-  and passes it to both chart views, which are pure renderers with no filter
-  knowledge. The visibility set never reaches `HealthKitManager`, the workout
+  and passes it to the carousels and Trends chart, which are pure renderers with no
+  filter knowledge. The visibility set never reaches `HealthKitManager`, the workout
   cache, or any HealthKit query — the domain layer always computes all five
   zones, so toggling re-renders from the already-computed data instantly with no
   data access.
@@ -301,10 +318,10 @@ Data is refreshed on three occasions:
   active, but only if `accessPhase == .ready` and the last fetch was more than 15
   minutes ago (throttling).
 
-Because the aggregate totals and both history series are recomputed from the
-cache, switching the segmented `DisplayMode` picker (Day / Week / Trends) — and the
-Trends Daily/Weekly granularity control — is instantaneous and triggers no
-HealthKit access.
+Because both history series are recomputed from the cache and feed every mode,
+switching the segmented `DisplayMode` picker (Day / Week / Trends), paging the
+carousels, and toggling the Trends Daily/Weekly control are all instantaneous and
+trigger no HealthKit access.
 
 ## Concurrency model
 
@@ -329,9 +346,20 @@ HealthKit access.
   shown, never what is fetched or computed; the domain layer is unaware of it.
 - **Fixed ~52-week query horizon.** Everything is derived from a single
   `historyStartDate` fetch (`historyWeeks = 52`), which bounds cost but also caps
-  the weekly Trends view at the last ~52 weeks and excludes anything older. The
-  daily Trends view is a shorter 90-day (`historyDays = 90`) slice of the same
-  cached data — no separate fetch.
+  the weekly views (Week carousel and weekly Trends) at the last ~52 weeks and
+  excludes anything older. The daily views (Day carousel and daily Trends) use a
+  shorter 90-day (`historyDays = 90`) slice of the same cached data — no separate
+  fetch.
+- **Calendar periods, not rolling windows.** The Day and Week carousels page over
+  calendar days and calendar weeks (the pageable units from `dailyHistory` /
+  `weeklyHistory`), so the current Week card is the partial calendar week — not a
+  rolling last-7-days total. This replaced the earlier `TimePeriod`/`zoneData`
+  rolling-window aggregates, which are gone.
+- **Weeks start Monday.** All week bucketing, card titles, and the weekly chart use
+  `Calendar.zoneScope` (`Calendar+ZoneScope.swift`) — the user's calendar with
+  `firstWeekday = 2` — to match Apple's Fitness app. `ZoneHistoryChart` also injects
+  it via `.environment(\.calendar, .zoneScope)` so Swift Charts bins weekly bars and
+  places axis marks on the same Monday boundaries as the data.
 - **HR-zone model is derived, not read.** ZoneScope computes zones itself from
   raw heart-rate samples rather than reading any zone data Apple/Watch may
   provide, which gives full control over the boundary definitions but ties
@@ -354,11 +382,12 @@ the cache diff/invalidation logic).
 
 Subsequent work cleared several of those items: the Zone 1 filter refactor fixed
 the `Array(zones.enumerated())` violation and made the zone list a `static let`,
-and the weekly-history work moved `TimePeriod` and `ZoneMinutes` into their own
-files (resolving the type-placement item). The force-unwraps on `HKObjectType`
-lookups, hardcoded frame widths in `ZoneRowView`, and the **no-tests** gap remain
-open. The pure logic added since — `recomputeWeeklyHistory()` /
-`recomputeDailyHistory()` bucketing, the
+and the weekly-history work moved `ZoneMinutes` into its own file (resolving the
+type-placement item); the carousel work then removed `TimePeriod` and `zoneData`
+entirely. The force-unwraps on `HKObjectType` lookups, hardcoded frame widths in
+`ZoneRowView`, and the **no-tests** gap remain open. The pure logic added since —
+`recomputeWeeklyHistory()` / `recomputeDailyHistory()` bucketing, the
 `ZoneMinutes` `+` operator, `ZoneVisibility` (bitmask round-trip and the
-"at least one visible" invariant), `visibleTotal`, and `zoneLimit(for:)` — would
-be straightforward to cover once a test target exists.
+"at least one visible" invariant), `visibleTotal`, `zoneLimit(for:)`, and the
+carousel's leading-empty trim — would be straightforward to cover once a test
+target exists.

@@ -41,7 +41,7 @@ struct ZoneHistoryChart<Point: ZoneHistoryPoint>: View {
     /// each shown label still centers on exactly one bar.
     private func barIndex(for date: Date) -> Int {
         guard let first = points.first?.date else { return 0 }
-        return Calendar.current.dateComponents([component], from: first, to: date).value(for: component) ?? 0
+        return Calendar.zoneScope.dateComponents([component], from: first, to: date).value(for: component) ?? 0
     }
 
     private func showsLabel(for date: Date) -> Bool {
@@ -54,7 +54,7 @@ struct ZoneHistoryChart<Point: ZoneHistoryPoint>: View {
     /// 1st/11th/21st so a month label stays visible within the 12-day window (and, when
     /// labels are thinned, shifts onto the following labeled day rather than vanishing).
     private func labelPeriod(for date: Date) -> (Int, Int, Int) {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let c = Calendar.zoneScope.dateComponents([.year, .month, .day], from: date)
         let segment = component == .day ? min(2, ((c.day ?? 1) - 1) / 10) : 0
         return (c.year ?? 0, c.month ?? 0, segment)
     }
@@ -62,7 +62,7 @@ struct ZoneHistoryChart<Point: ZoneHistoryPoint>: View {
     /// The month name shows on the first labeled bar of each label period; later
     /// labels in the same period blank the month line to keep the days aligned.
     private func showsMonth(for date: Date) -> Bool {
-        guard let previousLabeled = Calendar.current.date(byAdding: component, value: -labelStride, to: date) else {
+        guard let previousLabeled = Calendar.zoneScope.date(byAdding: component, value: -labelStride, to: date) else {
             return true
         }
         return labelPeriod(for: previousLabeled) != labelPeriod(for: date)
@@ -71,7 +71,7 @@ struct ZoneHistoryChart<Point: ZoneHistoryPoint>: View {
     /// Anchors the initial scroll position so the most recent bars are visible.
     private var scrollAnchor: Date? {
         guard let last = points.last?.date else { return nil }
-        let calendar = Calendar.current
+        let calendar = Calendar.zoneScope
         return calendar.date(byAdding: component, value: -(visibleBars - 1), to: last) ?? points.first?.date
     }
 
@@ -109,6 +109,8 @@ struct ZoneHistoryChart<Point: ZoneHistoryPoint>: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { chartWidth = $0 }
+        // Monday-first so weekly bars and axis marks bin to the same weeks as the data.
+        .environment(\.calendar, .zoneScope)
         .padding(.horizontal)
     }
 }

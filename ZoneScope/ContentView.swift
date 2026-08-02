@@ -45,52 +45,55 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
 
-                if !healthKit.isHealthKitAvailable {
-                    ContentUnavailableView(
-                        "HealthKit Unavailable",
-                        systemImage: "heart.slash",
-                        description: Text("HealthKit is not available on this device.")
-                    )
-                } else {
-                    switch healthKit.accessPhase {
-                    case .determining:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    case .needsAuthorization:
-                        AuthPromptView {
-                            Task { await healthKit.requestAuthorization() }
-                        }
-                    case .ready:
-                        if healthKit.isLoading || healthKit.lastFetchDate == nil {
-                            ProgressView("Loading zone data…")
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else {
-                            switch selectedMode {
-                            case .history:
-                                TrendsView(
-                                    dailyHistory: healthKit.dailyHistory,
-                                    weeklyHistory: healthKit.weeklyHistory,
-                                    visibleZones: visibleZones,
-                                    granularity: trendGranularity
-                                )
-                            case .day, .week:
-                                if let period = selectedMode.aggregatePeriod,
-                                   let zoneMinutes = healthKit.zoneData[period], zoneMinutes.total > 0 {
-                                    ZoneChartView(
-                                        zoneMinutes: zoneMinutes,
+                Group {
+                    if !healthKit.isHealthKitAvailable {
+                        ContentUnavailableView(
+                            "HealthKit Unavailable",
+                            systemImage: "heart.slash",
+                            description: Text("HealthKit is not available on this device.")
+                        )
+                    } else {
+                        switch healthKit.accessPhase {
+                        case .determining:
+                            ProgressView()
+                        case .needsAuthorization:
+                            AuthPromptView {
+                                Task { await healthKit.requestAuthorization() }
+                            }
+                        case .ready:
+                            if healthKit.isLoading || healthKit.lastFetchDate == nil {
+                                ProgressView("Loading zone data…")
+                            } else {
+                                switch selectedMode {
+                                case .history:
+                                    TrendsView(
+                                        dailyHistory: healthKit.dailyHistory,
+                                        weeklyHistory: healthKit.weeklyHistory,
+                                        visibleZones: visibleZones,
+                                        granularity: trendGranularity
+                                    )
+                                case .day:
+                                    ZonePeriodCarousel(
+                                        points: healthKit.dailyHistory,
+                                        component: .day,
                                         maxHeartRate: healthKit.maxHeartRate,
                                         restingHeartRate: healthKit.restingHeartRate,
                                         visibleZones: visibleZones
                                     )
-                                } else {
-                                    NoWorkoutDataView()
+                                case .week:
+                                    ZonePeriodCarousel(
+                                        points: healthKit.weeklyHistory,
+                                        component: .weekOfYear,
+                                        maxHeartRate: healthKit.maxHeartRate,
+                                        restingHeartRate: healthKit.restingHeartRate,
+                                        visibleZones: visibleZones
+                                    )
                                 }
                             }
                         }
                     }
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .safeAreaInset(edge: .bottom) {
                 if isShowingTrends {

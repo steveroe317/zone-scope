@@ -27,7 +27,6 @@ enum AccessPhase {
 final class HealthKitManager {
     var accessPhase: AccessPhase = .determining
     var isLoading = false
-    var zoneData: [TimePeriod: ZoneMinutes] = [:]
     var weeklyHistory: [WeeklyZoneData] = []
     var dailyHistory: [DailyZoneData] = []
     private(set) var lastFetchDate: Date?
@@ -48,7 +47,7 @@ final class HealthKitManager {
 
     /// Start of the earliest week included in the fetch/history window.
     private var historyStartDate: Date {
-        let calendar = Calendar.current
+        let calendar = Calendar.zoneScope
         let earliest = calendar.date(byAdding: .weekOfYear, value: -(Self.historyWeeks - 1), to: Date()) ?? Date()
         return calendar.dateInterval(of: .weekOfYear, for: earliest)?.start ?? earliest
     }
@@ -221,8 +220,7 @@ final class HealthKitManager {
             )
         }
 
-        // Step 7: recompute period totals, weekly, and daily history from cache — no HealthKit queries
-        zoneData = recomputeZoneData()
+        // Step 7: recompute weekly and daily history from cache — no HealthKit queries
         weeklyHistory = recomputeWeeklyHistory()
         dailyHistory = recomputeDailyHistory()
     }
@@ -246,23 +244,10 @@ final class HealthKitManager {
         }
     }
 
-    private func recomputeZoneData() -> [TimePeriod: ZoneMinutes] {
-        var result: [TimePeriod: ZoneMinutes] = [:]
-        for period in TimePeriod.allCases {
-            let windowStart = period.startDate
-            var total = ZoneMinutes()
-            for entry in workoutCache.values where entry.startDate >= windowStart {
-                total += entry.zoneMinutes
-            }
-            result[period] = total
-        }
-        return result
-    }
-
     /// Buckets cached workouts into contiguous calendar weeks across the history window,
     /// including empty weeks so the timeline has no gaps.
     private func recomputeWeeklyHistory() -> [WeeklyZoneData] {
-        let calendar = Calendar.current
+        let calendar = Calendar.zoneScope
         let now = Date()
         let start = historyStartDate
 
