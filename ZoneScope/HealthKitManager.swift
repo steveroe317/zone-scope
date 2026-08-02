@@ -258,13 +258,22 @@ final class HealthKitManager {
         }
 
         var buckets: [Date: ZoneMinutes] = Dictionary(uniqueKeysWithValues: weekStarts.map { ($0, ZoneMinutes()) })
+        var dayBuckets: [Date: ZoneMinutes] = [:]
         for entry in workoutCache.values {
-            guard let weekStart = calendar.dateInterval(of: .weekOfYear, for: entry.startDate)?.start,
-                  buckets[weekStart] != nil else { continue }
-            buckets[weekStart]? += entry.zoneMinutes
+            if let weekStart = calendar.dateInterval(of: .weekOfYear, for: entry.startDate)?.start,
+               buckets[weekStart] != nil {
+                buckets[weekStart]? += entry.zoneMinutes
+            }
+            dayBuckets[calendar.startOfDay(for: entry.startDate), default: ZoneMinutes()] += entry.zoneMinutes
         }
 
-        return weekStarts.map { WeeklyZoneData(weekStart: $0, zoneMinutes: buckets[$0] ?? ZoneMinutes()) }
+        return weekStarts.map { weekStart in
+            let days = (0..<7).compactMap { offset -> DailyZoneData? in
+                guard let dayStart = calendar.date(byAdding: .day, value: offset, to: weekStart) else { return nil }
+                return DailyZoneData(dayStart: dayStart, zoneMinutes: dayBuckets[dayStart] ?? ZoneMinutes())
+            }
+            return WeeklyZoneData(weekStart: weekStart, zoneMinutes: buckets[weekStart] ?? ZoneMinutes(), days: days)
+        }
     }
 
     /// Buckets cached workouts into contiguous calendar days across the daily window,

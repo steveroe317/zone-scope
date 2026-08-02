@@ -37,8 +37,10 @@ ZoneScope/
 │   ├── AboutFeatureRow.swift      # One capability row in the About sheet
 │   ├── ZonePeriodCarousel.swift   # Day/Week mode: paged carousel of period cards
 │   ├── ZonePeriodCard.swift       # One dated card: header + zone breakdown / rest state
+│   ├── AdaptiveSplitView.swift    # Portrait-stacked / landscape-side-by-side layout
 │   ├── ZoneChartView.swift        # A period's breakdown: four or five zone rows + total
 │   ├── ZoneRowView.swift          # One zone's bar + labels
+│   ├── WeekZoneChart.swift        # Weekly card's 7-day (Mon–Sun) stacked bar chart
 │   ├── TrendsView.swift           # Trends mode: daily/weekly chart selection
 │   ├── ZoneHistoryChart.swift     # Shared Trends chart: stacked bar per day or week
 │   ├── ZoneHistoryPoint.swift     # Protocol the period series conform to
@@ -86,8 +88,9 @@ model class and its file-private cache entry:
   `RawRepresentable` as an `Int` bitmask so it persists in `@AppStorage`. Owns the
   "at least one zone visible" invariant (`setVisible`, `isLocked`, `isAllVisible`).
 - **`WeeklyZoneData`** (`WeeklyZoneData.swift`) — one week's `ZoneMinutes` keyed
-  by that week's start date; the element type of the weekly series (Week carousel
-  and weekly Trends).
+  by that week's start date, plus `days` (its seven `DailyZoneData`, Monday–Sunday,
+  future days empty) for the weekly card's per-day chart; the element type of the
+  weekly series (Week carousel and weekly Trends).
 - **`DailyZoneData`** (`DailyZoneData.swift`) — one day's `ZoneMinutes` keyed by
   that day's start date; the element type of the daily series (Day carousel and
   daily Trends).
@@ -143,12 +146,21 @@ project's style guidelines):
   current period if there is no data at all), so you never swipe through empty
   history before your first workout. The `containerRelativeFrame` count is the seam
   for a future iPad multi-card layout.
-- **`ZonePeriodCard`** — one carousel page, generic over `ZoneHistoryPoint`: a
-  dated header (relative "Today"/"This Week"/"Yesterday"/"Last Week", else a date or
-  week range) over the body — `ZoneChartView` when the period has data, a
-  "Rest Day"/"Rest Week" `ContentUnavailableView` for an empty *past* period, or
-  `NoWorkoutDataView` for the empty *current* period. Split out (and card chrome
-  kept separate from the carousel) so an iPad layout can reuse it.
+- **`ZonePeriodCard`** — one carousel page, generic over `ZoneHistoryPoint` and an
+  optional secondary-view `Detail`: a dated header (relative "Today"/"This Week"/
+  "Yesterday"/"Last Week", else a date or week range) over the body — the summary
+  (`ZoneChartView`) when the period has data, a "Rest Day"/"Rest Week"
+  `ContentUnavailableView` for an empty *past* period, or `NoWorkoutDataView` for the
+  empty *current* period. In the has-data branch the summary is paired with the
+  `detail` view via `AdaptiveSplitView`; a convenience init (`Detail == EmptyView`)
+  gives the Day card the summary alone. Split out (and card chrome kept separate from
+  the carousel) so an iPad layout can reuse it.
+- **`AdaptiveSplitView`** — a small reusable layout that places two views at roughly
+  equal size, stacking them vertically when its space is taller than wide (portrait)
+  and horizontally when wider than tall (landscape), chosen by measured aspect ratio
+  (`onGeometryChange`) so it is orientation- and device-agnostic. Collapses to the
+  primary alone when the secondary is `EmptyView`. This is the reusable seam for
+  adding a chart to the Day card later.
 - **`ZoneChartView`** — a single period's breakdown, shown inside a card. Receives a
   `ZoneMinutes` value, HR parameters, and the visible `[Zone]` list. Renormalizes
   bar widths to the max of the *visible* zones and shows a total summed over only
@@ -156,6 +168,11 @@ project's style guidelines):
   `zoneLimit(for:)` lookup.
 - **`ZoneRowView`** — renders one zone: name/number, a proportional bar, and the
   minutes/BPM-range labels.
+- **`WeekZoneChart`** — the weekly card's secondary view: a compact Swift Charts
+  stacked `BarMark` chart of the week's seven days (Monday–Sunday) from
+  `WeeklyZoneData.days`, with weekday-initial x labels, no legend, and Monday-first
+  (`.environment(\.calendar, .zoneScope)`). Future/empty days render as zero-height
+  bars under their label. Reuses the shared `Zone` palette.
 - **`ZoneHistoryChart`** — the shared Trends chart, generic over `ZoneHistoryPoint`
   and parameterized by a `Calendar.Component` (`.day` or `.weekOfYear`). A Swift
   Charts stacked `BarMark` chart, one bar per component (height = total minutes,
@@ -256,10 +273,11 @@ recompute what actually changed:
 7. **Recompute derived views** purely from the in-memory cache — no additional
    HealthKit queries: `recomputeWeeklyHistory()` buckets cached workouts into
    contiguous calendar weeks (`historyWeeks = 52`) to build the `weeklyHistory`
-   series, and `recomputeDailyHistory()` buckets them into contiguous calendar days
-   (`historyDays = 90`) to build `dailyHistory`. Both include empty buckets so the
-   timelines have no gaps — and both feed the Day/Week carousels as well as the
-   Trends charts.
+   series — and in the same pass buckets each week's seven days (Monday–Sunday) into
+   `WeeklyZoneData.days` for the weekly card's chart — and `recomputeDailyHistory()`
+   buckets them into contiguous calendar days (`historyDays = 90`) to build
+   `dailyHistory`. Both include empty buckets so the timelines have no gaps — and both
+   feed the Day/Week carousels as well as the Trends charts.
 
 `isLoading` guards against overlapping runs (early-return if already loading),
 and `lastFetchDate` records the run time to drive throttled refreshes.

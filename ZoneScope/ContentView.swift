@@ -87,7 +87,9 @@ struct ContentView: View {
                                         maxHeartRate: healthKit.maxHeartRate,
                                         restingHeartRate: healthKit.restingHeartRate,
                                         visibleZones: visibleZones
-                                    )
+                                    ) { week in
+                                        WeekZoneChart(days: week.days, visibleZones: visibleZones)
+                                    }
                                 }
                             }
                         }

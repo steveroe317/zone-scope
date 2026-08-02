@@ -10,7 +10,7 @@ import SwiftUI
 /// One page of the Day/Week carousel: a dated header over that period's zone
 /// breakdown, or a rest / no-data state. Generic over the period type so the day
 /// and week carousels share it, and split out so an iPad layout can reuse it later.
-struct ZonePeriodCard<Point: ZoneHistoryPoint>: View {
+struct ZonePeriodCard<Point: ZoneHistoryPoint, Detail: View>: View {
     let point: Point
     /// The calendar unit this card covers — `.day` or `.weekOfYear`.
     let component: Calendar.Component
@@ -20,6 +20,27 @@ struct ZonePeriodCard<Point: ZoneHistoryPoint>: View {
     let maxHeartRate: Double
     let restingHeartRate: Double
     let visibleZones: [Zone]
+    /// An optional secondary view shown beside the summary (e.g. the week's day chart).
+    /// When `EmptyView`, the card shows the summary alone.
+    private let detail: (Point) -> Detail
+
+    init(
+        point: Point,
+        component: Calendar.Component,
+        isCurrent: Bool,
+        maxHeartRate: Double,
+        restingHeartRate: Double,
+        visibleZones: [Zone],
+        @ViewBuilder detail: @escaping (Point) -> Detail
+    ) {
+        self.point = point
+        self.component = component
+        self.isCurrent = isCurrent
+        self.maxHeartRate = maxHeartRate
+        self.restingHeartRate = restingHeartRate
+        self.visibleZones = visibleZones
+        self.detail = detail
+    }
 
     /// A relative ("Today", "This Week") or absolute date title for the period.
     private var title: String {
@@ -54,15 +75,19 @@ struct ZonePeriodCard<Point: ZoneHistoryPoint>: View {
                 .font(.headline)
 
             if point.zoneMinutes.total > 0 {
-                ScrollView {
-                    ZoneChartView(
-                        zoneMinutes: point.zoneMinutes,
-                        maxHeartRate: maxHeartRate,
-                        restingHeartRate: restingHeartRate,
-                        visibleZones: visibleZones
-                    )
+                AdaptiveSplitView {
+                    ScrollView {
+                        ZoneChartView(
+                            zoneMinutes: point.zoneMinutes,
+                            maxHeartRate: maxHeartRate,
+                            restingHeartRate: restingHeartRate,
+                            visibleZones: visibleZones
+                        )
+                    }
+                    .scrollIndicators(.hidden)
+                } secondary: {
+                    detail(point)
                 }
-                .scrollIndicators(.hidden)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isCurrent {
                 NoWorkoutDataView()
@@ -81,6 +106,28 @@ struct ZonePeriodCard<Point: ZoneHistoryPoint>: View {
         .background(.regularMaterial, in: .rect(cornerRadius: 16))
         .padding(.horizontal)
         .padding(.bottom)
+    }
+}
+
+extension ZonePeriodCard where Detail == EmptyView {
+    /// A card with no secondary view (the summary alone) — used by the Day carousel.
+    init(
+        point: Point,
+        component: Calendar.Component,
+        isCurrent: Bool,
+        maxHeartRate: Double,
+        restingHeartRate: Double,
+        visibleZones: [Zone]
+    ) {
+        self.init(
+            point: point,
+            component: component,
+            isCurrent: isCurrent,
+            maxHeartRate: maxHeartRate,
+            restingHeartRate: restingHeartRate,
+            visibleZones: visibleZones,
+            detail: { _ in EmptyView() }
+        )
     }
 }
 
@@ -113,15 +160,29 @@ struct ZonePeriodCard<Point: ZoneHistoryPoint>: View {
 }
 
 #Preview("Week · data") {
-    ZonePeriodCard(
+    let calendar = Calendar.zoneScope
+    let weekStart = calendar.date(byAdding: .weekOfYear, value: -3, to: .now).flatMap {
+        calendar.dateInterval(of: .weekOfYear, for: $0)?.start
+    } ?? .now
+    let days: [DailyZoneData] = (0..<7).compactMap { offset in
+        guard let dayStart = calendar.date(byAdding: .day, value: offset, to: weekStart) else { return nil }
+        let minutes = offset == 3
+            ? ZoneMinutes()
+            : ZoneMinutes(zone1: Double(20 + offset * 4), zone2: 18, zone3: 12, zone4: 6, zone5: 3)
+        return DailyZoneData(dayStart: dayStart, zoneMinutes: minutes)
+    }
+    return ZonePeriodCard(
         point: WeeklyZoneData(
-            weekStart: Calendar.current.date(byAdding: .weekOfYear, value: -3, to: .now) ?? .now,
-            zoneMinutes: ZoneMinutes(zone1: 180, zone2: 120, zone3: 70, zone4: 30, zone5: 12)
+            weekStart: weekStart,
+            zoneMinutes: ZoneMinutes(zone1: 180, zone2: 120, zone3: 70, zone4: 30, zone5: 12),
+            days: days
         ),
         component: .weekOfYear,
         isCurrent: false,
         maxHeartRate: 190,
         restingHeartRate: 60,
         visibleZones: Zone.all
-    )
+    ) { week in
+        WeekZoneChart(days: week.days, visibleZones: Zone.all)
+    }
 }

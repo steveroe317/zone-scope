@@ -14,13 +14,32 @@ import SwiftUI
 /// The visible range starts at the first period that has data (or the current period
 /// if none), trimming leading empty periods; the carousel opens on the current
 /// period and swipes back in time.
-struct ZonePeriodCarousel<Point: ZoneHistoryPoint>: View {
+struct ZonePeriodCarousel<Point: ZoneHistoryPoint, Detail: View>: View {
     /// The full contiguous history, oldest → newest, current period last.
     let points: [Point]
     let component: Calendar.Component
     let maxHeartRate: Double
     let restingHeartRate: Double
     let visibleZones: [Zone]
+    /// An optional secondary view for each card (e.g. the week's day chart); `EmptyView`
+    /// for the Day carousel.
+    private let detail: (Point) -> Detail
+
+    init(
+        points: [Point],
+        component: Calendar.Component,
+        maxHeartRate: Double,
+        restingHeartRate: Double,
+        visibleZones: [Zone],
+        @ViewBuilder detail: @escaping (Point) -> Detail
+    ) {
+        self.points = points
+        self.component = component
+        self.maxHeartRate = maxHeartRate
+        self.restingHeartRate = restingHeartRate
+        self.visibleZones = visibleZones
+        self.detail = detail
+    }
 
     /// The cards to show: from the first period with data (or the current period if
     /// there is no data anywhere) through the current period.
@@ -42,7 +61,8 @@ struct ZonePeriodCarousel<Point: ZoneHistoryPoint>: View {
                         isCurrent: point.id == currentID,
                         maxHeartRate: maxHeartRate,
                         restingHeartRate: restingHeartRate,
-                        visibleZones: visibleZones
+                        visibleZones: visibleZones,
+                        detail: detail
                     )
                     .containerRelativeFrame(.horizontal)
                     .id(point.id)
@@ -53,6 +73,27 @@ struct ZonePeriodCarousel<Point: ZoneHistoryPoint>: View {
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.hidden)
         .defaultScrollAnchor(.trailing)
+    }
+}
+
+extension ZonePeriodCarousel where Detail == EmptyView {
+    /// A carousel whose cards have no secondary view (the summary alone) — used by the
+    /// Day carousel.
+    init(
+        points: [Point],
+        component: Calendar.Component,
+        maxHeartRate: Double,
+        restingHeartRate: Double,
+        visibleZones: [Zone]
+    ) {
+        self.init(
+            points: points,
+            component: component,
+            maxHeartRate: maxHeartRate,
+            restingHeartRate: restingHeartRate,
+            visibleZones: visibleZones,
+            detail: { _ in EmptyView() }
+        )
     }
 }
 
