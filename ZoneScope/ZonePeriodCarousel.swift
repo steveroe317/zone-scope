@@ -70,7 +70,7 @@ struct ZonePeriodCarousel<Point: ZoneHistoryPoint, Detail: View>: View {
             }
             .scrollTargetLayout()
         }
-        .scrollTargetBehavior(.paging)
+        .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
         .defaultScrollAnchor(.trailing)
     }
