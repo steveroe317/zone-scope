@@ -14,3 +14,7 @@ struct WeeklyZoneData: Identifiable {
 
     var id: Date { weekStart }
 }
+
+extension WeeklyZoneData: ZoneHistoryPoint {
+    var date: Date { weekStart }
+}

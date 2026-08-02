@@ -45,8 +45,8 @@ struct AboutView: View {
                     )
                     AboutFeatureRow(
                         systemImage: "calendar",
-                        title: "History",
-                        detail: "Weekly zone trends as stacked bars across the past year."
+                        title: "Trends",
+                        detail: "Zone trends as stacked bars over time — switch between daily bars for the past 90 days and weekly bars for the past year."
                     )
                     AboutFeatureRow(
                         systemImage: "slider.horizontal.3",

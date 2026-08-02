@@ -12,10 +12,19 @@ struct ContentView: View {
     @State private var selectedMode: DisplayMode = .week
     @State private var showingAbout = false
     @AppStorage("zoneVisibility") private var zoneVisibility = ZoneVisibility.all
+    @AppStorage("trendGranularity") private var trendGranularity = TrendGranularity.weekly
     @Environment(\.scenePhase) private var scenePhase
 
     private var visibleZones: [Zone] {
         Zone.all.filter { zoneVisibility.isVisible($0.number) }
+    }
+
+    /// Whether the Trends charts are currently on screen — gates the bottom
+    /// granularity control so it appears only alongside them.
+    private var isShowingTrends: Bool {
+        selectedMode == .history
+            && healthKit.accessPhase == .ready
+            && !(healthKit.isLoading || healthKit.lastFetchDate == nil)
     }
 
     private func visibilityBinding(for number: Int) -> Binding<Bool> {
@@ -58,11 +67,12 @@ struct ContentView: View {
                         } else {
                             switch selectedMode {
                             case .history:
-                                if healthKit.weeklyHistory.contains(where: { $0.zoneMinutes.total > 0 }) {
-                                    WeeklyHistoryView(weeks: healthKit.weeklyHistory, visibleZones: visibleZones)
-                                } else {
-                                    NoWorkoutDataView()
-                                }
+                                TrendsView(
+                                    dailyHistory: healthKit.dailyHistory,
+                                    weeklyHistory: healthKit.weeklyHistory,
+                                    visibleZones: visibleZones,
+                                    granularity: trendGranularity
+                                )
                             case .day, .week:
                                 if let period = selectedMode.aggregatePeriod,
                                    let zoneMinutes = healthKit.zoneData[period], zoneMinutes.total > 0 {
@@ -81,6 +91,18 @@ struct ContentView: View {
                 }
 
                 Spacer()
+            }
+            .safeAreaInset(edge: .bottom) {
+                if isShowingTrends {
+                    Picker("Trend granularity", selection: $trendGranularity) {
+                        ForEach(TrendGranularity.allCases) { granularity in
+                            Text(granularity.rawValue).tag(granularity)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
             }
             .navigationTitle("ZoneScope")
             .navigationBarTitleDisplayMode(.inline)
