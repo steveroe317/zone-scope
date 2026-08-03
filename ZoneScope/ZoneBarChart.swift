@@ -18,10 +18,32 @@ struct ZoneBarChart<Point: ZoneHistoryPoint>: View {
     let visibleZones: [Zone]
     /// The unit each bar spans — `.day` (weekday labels) or `.hour` (hour labels).
     let component: Calendar.Component
+    /// Typical zone minutes for each bar, drawn behind it as a faint "high water mark"
+    /// reference. Parallel to `points`; empty to draw no background.
+    var averages: [ZoneMinutes] = []
+    /// The y-axis maximum, supplied by the caller so every card in a carousel shares one
+    /// scale rather than each chart auto-scaling to its own bars. See `ZoneChartScale`.
+    let upperBound: Double
 
     /// Label every Nth bar: all days for a week, every 6th hour for a day (12A/6A/12P/6P).
     private var labelStride: Int {
         component == .hour ? 6 : 1
+    }
+
+    private func average(at index: Int) -> ZoneMinutes {
+        averages.indices.contains(index) ? averages[index] : ZoneMinutes()
+    }
+
+    /// The zone's slice of a stacked background bar: cumulative offsets across the
+    /// visible zones, so background segments stack among themselves.
+    private func bounds(for zone: Zone, in minutes: ZoneMinutes) -> (start: Double, end: Double) {
+        var start = 0.0
+        for visible in visibleZones {
+            let value = minutes[visible.number]
+            if visible.number == zone.number { return (start, start + value) }
+            start += value
+        }
+        return (start, start)
     }
 
     /// The bar's position in the series, so labels can be strided by index while each
@@ -37,19 +59,34 @@ struct ZoneBarChart<Point: ZoneHistoryPoint>: View {
     }
 
     var body: some View {
-        Chart(points) { point in
-            ForEach(visibleZones) { zone in
-                BarMark(
-                    x: .value("Time", point.date, unit: component),
-                    y: .value("Minutes", point.zoneMinutes[zone.number])
-                )
-                .foregroundStyle(by: .value("Zone", zone.name))
+        Chart {
+            ForEach(points.enumerated(), id: \.element.id) { index, point in
+                // The average, drawn first so the actual bar covers it. Explicit y
+                // ranges keep it out of the foreground's automatic stacking.
+                let typical = average(at: index)
+                ForEach(visibleZones) { zone in
+                    let span = bounds(for: zone, in: typical)
+                    BarMark(
+                        x: .value("Time", point.date, unit: component),
+                        yStart: .value("Minutes", span.start),
+                        yEnd: .value("Minutes", span.end)
+                    )
+                    .foregroundStyle(zone.color.opacity(0.15))
+                }
+                ForEach(visibleZones) { zone in
+                    BarMark(
+                        x: .value("Time", point.date, unit: component),
+                        y: .value("Minutes", point.zoneMinutes[zone.number])
+                    )
+                    .foregroundStyle(by: .value("Zone", zone.name))
+                }
             }
         }
         .chartForegroundStyleScale(
             domain: visibleZones.map(\.name),
             range: visibleZones.map(\.color)
         )
+        .chartYScale(domain: 0...upperBound)
         .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: .stride(by: component)) { value in
@@ -78,9 +115,20 @@ struct ZoneBarChart<Point: ZoneHistoryPoint>: View {
             : ZoneMinutes(zone1: Double(20 + offset * 4), zone2: 15, zone3: 10, zone4: 6, zone5: 3)
         return DailyZoneData(dayStart: dayStart, zoneMinutes: minutes)
     }
-    return ZoneBarChart(points: days, visibleZones: Zone.all, component: .day)
-        .frame(height: 240)
-        .padding()
+    // A flat "typical" week, so some days land above it and some below.
+    let averages = [ZoneMinutes](
+        repeating: ZoneMinutes(zone1: 24, zone2: 14, zone3: 9, zone4: 5, zone5: 2),
+        count: 7
+    )
+    return ZoneBarChart(
+        points: days,
+        visibleZones: Zone.all,
+        component: .day,
+        averages: averages,
+        upperBound: 90
+    )
+    .frame(height: 240)
+    .padding()
 }
 
 #Preview("Day (hours)") {
@@ -94,7 +142,22 @@ struct ZoneBarChart<Point: ZoneHistoryPoint>: View {
             : ZoneMinutes()
         return HourlyZoneData(hourStart: hourStart, zoneMinutes: minutes)
     }
-    return ZoneBarChart(points: hours, visibleZones: Zone.all, component: .hour)
-        .frame(height: 240)
-        .padding()
+    // Typically a light morning and a bigger evening session on this weekday.
+    let averages: [ZoneMinutes] = (0..<24).map { hour in
+        switch hour {
+        case 7:  return ZoneMinutes(zone1: 6, zone2: 10, zone3: 6, zone4: 2, zone5: 1)
+        case 17: return ZoneMinutes(zone1: 5, zone2: 12, zone3: 9, zone4: 4, zone5: 1)
+        case 18: return ZoneMinutes(zone1: 7, zone2: 16, zone3: 12, zone4: 6, zone5: 2)
+        default: return ZoneMinutes()
+        }
+    }
+    return ZoneBarChart(
+        points: hours,
+        visibleZones: Zone.all,
+        component: .hour,
+        averages: averages,
+        upperBound: 60
+    )
+    .frame(height: 240)
+    .padding()
 }

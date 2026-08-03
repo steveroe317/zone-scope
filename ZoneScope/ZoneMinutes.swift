@@ -42,6 +42,17 @@ struct ZoneMinutes {
         lhs = lhs + rhs
     }
 
+    /// Every zone's minutes multiplied by `factor` — used to average accumulated sums.
+    func scaled(by factor: Double) -> ZoneMinutes {
+        ZoneMinutes(
+            zone1: zone1 * factor,
+            zone2: zone2 * factor,
+            zone3: zone3 * factor,
+            zone4: zone4 * factor,
+            zone5: zone5 * factor
+        )
+    }
+
     /// Adds minutes to the given zone (1–5); out-of-range zones are ignored.
     mutating func add(_ minutes: Double, toZone zone: Int) {
         switch zone {

@@ -32,6 +32,14 @@ final class HealthKitManager {
     var isLoading = false
     var weeklyHistory: [WeeklyZoneData] = []
     var dailyHistory: [DailyZoneData] = []
+    /// Average zone minutes per weekday over the averaging window, Monday-first.
+    var weekdayAverages: [ZoneMinutes] = Array(repeating: ZoneMinutes(), count: 7)
+    /// Average zone minutes per hour for each weekday over the averaging window,
+    /// indexed `[weekday (Monday-first)][hour]`.
+    var hourlyAveragesByWeekday: [[ZoneMinutes]] = Array(
+        repeating: Array(repeating: ZoneMinutes(), count: 24),
+        count: 7
+    )
     private(set) var lastFetchDate: Date?
 
     private let healthStore = HKHealthStore()
@@ -47,6 +55,9 @@ final class HealthKitManager {
 
     /// Number of days shown in the daily trends view.
     static let historyDays = 90
+
+    /// Number of weeks averaged for the cards' "high water mark" chart backgrounds.
+    static let averageWeeks = 12
 
     /// Start of the earliest week included in the fetch/history window.
     private var historyStartDate: Date {
@@ -227,6 +238,9 @@ final class HealthKitManager {
         // Step 7: recompute weekly and daily history from cache — no HealthKit queries
         weeklyHistory = recomputeWeeklyHistory()
         dailyHistory = recomputeDailyHistory()
+        let averages = recomputeAverages()
+        weekdayAverages = averages.weekday
+        hourlyAveragesByWeekday = averages.hourly
     }
 
     private func fetchWorkoutObjects(since startDate: Date) async -> [HKWorkout] {
@@ -309,6 +323,35 @@ final class HealthKitManager {
             }
             return DailyZoneData(dayStart: dayStart, zoneMinutes: buckets[dayStart] ?? ZoneMinutes(), hours: hours)
         }
+    }
+
+    /// Averages zone minutes per weekday, and per hour within each weekday, over the
+    /// `averageWeeks` most recent *complete* weeks — the current partial week is excluded
+    /// so it can't dilute the averages. Rest days count as zero (the divisor is always
+    /// the full week count), giving a true "average Monday" that active days exceed.
+    private func recomputeAverages() -> (weekday: [ZoneMinutes], hourly: [[ZoneMinutes]]) {
+        let calendar = Calendar.zoneScope
+        let now = Date()
+        let windowEnd = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
+        let windowStart = calendar.date(byAdding: .weekOfYear, value: -Self.averageWeeks, to: windowEnd) ?? windowEnd
+
+        var weekdaySums = [ZoneMinutes](repeating: ZoneMinutes(), count: 7)
+        var hourlySums = [[ZoneMinutes]](repeating: [ZoneMinutes](repeating: ZoneMinutes(), count: 24), count: 7)
+
+        for entry in workoutCache.values where entry.startDate >= windowStart && entry.startDate < windowEnd {
+            weekdaySums[calendar.mondayFirstIndex(for: entry.startDate)] += entry.zoneMinutes
+            for (hourStart, minutes) in entry.hourlyZoneMinutes {
+                let weekday = calendar.mondayFirstIndex(for: hourStart)
+                let hour = calendar.component(.hour, from: hourStart)
+                hourlySums[weekday][hour] += minutes
+            }
+        }
+
+        let factor = 1 / Double(Self.averageWeeks)
+        return (
+            weekdaySums.map { $0.scaled(by: factor) },
+            hourlySums.map { $0.map { $0.scaled(by: factor) } }
+        )
     }
 
     private func fetchHRZoneMinutes(for workout: HKWorkout) async -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes]) {

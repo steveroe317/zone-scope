@@ -19,6 +19,25 @@ struct ContentView: View {
         Zone.all.filter { zoneVisibility.isVisible($0.number) }
     }
 
+    /// One y-axis bound for every week card's chart, so paging the carousel doesn't
+    /// rescale it. Averages are folded in defensively — they sit below the data max in
+    /// practice, but the averaging window and the retained history don't align exactly.
+    private var weeklyChartUpperBound: Double {
+        ZoneChartScale.upperBound(
+            over: healthKit.weeklyHistory.flatMap(\.days).map(\.zoneMinutes) + healthKit.weekdayAverages,
+            visibleZones: visibleZones
+        )
+    }
+
+    /// The same shared bound for every day card's hourly chart.
+    private var dailyChartUpperBound: Double {
+        ZoneChartScale.upperBound(
+            over: healthKit.dailyHistory.flatMap(\.hours).map(\.zoneMinutes)
+                + healthKit.hourlyAveragesByWeekday.flatMap { $0 },
+            visibleZones: visibleZones
+        )
+    }
+
     /// Whether the Trends charts are currently on screen — gates the bottom
     /// granularity control so it appears only alongside them.
     private var isShowingTrends: Bool {
@@ -80,7 +99,15 @@ struct ContentView: View {
                                         restingHeartRate: healthKit.restingHeartRate,
                                         visibleZones: visibleZones
                                     ) { day in
-                                        ZoneBarChart(points: day.hours, visibleZones: visibleZones, component: .hour)
+                                        ZoneBarChart(
+                                            points: day.hours,
+                                            visibleZones: visibleZones,
+                                            component: .hour,
+                                            averages: healthKit.hourlyAveragesByWeekday[
+                                                Calendar.zoneScope.mondayFirstIndex(for: day.dayStart)
+                                            ],
+                                            upperBound: dailyChartUpperBound
+                                        )
                                     }
                                 case .week:
                                     ZonePeriodCarousel(
@@ -90,7 +117,13 @@ struct ContentView: View {
                                         restingHeartRate: healthKit.restingHeartRate,
                                         visibleZones: visibleZones
                                     ) { week in
-                                        ZoneBarChart(points: week.days, visibleZones: visibleZones, component: .day)
+                                        ZoneBarChart(
+                                            points: week.days,
+                                            visibleZones: visibleZones,
+                                            component: .day,
+                                            averages: healthKit.weekdayAverages,
+                                            upperBound: weeklyChartUpperBound
+                                        )
                                     }
                                 }
                             }

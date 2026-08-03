@@ -41,6 +41,7 @@ ZoneScope/
 │   ├── ZoneChartView.swift        # A period's breakdown: four or five zone rows + total
 │   ├── ZoneRowView.swift          # One zone's bar + labels
 │   ├── ZoneBarChart.swift         # Shared card chart: 7-day (week) or 24-hour (day) bars
+│   ├── ZoneChartScale.swift       # Shared y-axis bound so carousel cards don't rescale
 │   ├── TrendsView.swift           # Trends mode: daily/weekly chart selection
 │   ├── ZoneHistoryChart.swift     # Shared Trends chart: stacked bar per day or week
 │   ├── ZoneHistoryPoint.swift     # Protocol the period series conform to
@@ -114,6 +115,7 @@ model class and its file-private cache entry:
 - **`HealthKitManager`** — a `@MainActor @Observable final class` that is the
   single source of truth for authorization state, loading state, the `weeklyHistory`
   and `dailyHistory` series (which feed both the carousels and the Trends charts),
+  the `weekdayAverages` / `hourlyAveragesByWeekday` baselines behind the card charts,
   and the HR parameters (`maxHeartRate`, `restingHeartRate`).
 
 ### Presentation layer (SwiftUI views)
@@ -183,7 +185,21 @@ project's style guidelines):
   labels centered on their bars (per-bar mark + `AxisValueLabel(centered:)`, thinned by
   a `barIndex % labelStride` gate). Empty/future points render as zero-height bars.
   Not scrollable — it shows every point at once, which also avoids conflicting with the
-  carousel's horizontal page-swipe.
+  carousel's horizontal page-swipe. Behind each bar it draws that slot's 12-week average
+  (`averages`, parallel to `points`) as a faint "high water mark" reference, stacked per
+  zone in `zone.color.opacity(0.15)` — the same track treatment as `ZoneRowView`. The
+  background uses explicit `yStart`/`yEnd` cumulative ranges so it stays out of the
+  foreground's automatic stacking, and both layers honor `visibleZones`. The Week card
+  passes the per-weekday averages; the Day card passes the card weekday's hourly
+  averages. The y-axis is **not** auto-scaled: the chart applies a caller-supplied
+  `upperBound` (`chartYScale`) so every card in a carousel shares one scale and bars stay
+  comparable while paging.
+- **`ZoneChartScale`** — derives that bound: the tallest bar across the whole carousel's
+  history (plus its averages), summed over the **visible** zones only, rounded up to a
+  readable step. Nothing clips, axis labels stay tidy, and the bound only moves when a
+  new bar crosses a step or the zone filter changes. `ContentView` computes one bound per
+  carousel (`weeklyChartUpperBound`, `dailyChartUpperBound`); Day and Week keep separate
+  bounds since an hour's minutes and a day's minutes aren't comparable.
 - **`ZoneHistoryChart`** — the shared Trends chart, generic over `ZoneHistoryPoint`
   and parameterized by a `Calendar.Component` (`.day` or `.weekOfYear`). A Swift
   Charts stacked `BarMark` chart, one bar per component (height = total minutes,
@@ -292,7 +308,11 @@ recompute what actually changed:
    `dailyHistory`, and — from the cached per-hour maps — each day's 24 hours into
    `DailyZoneData.hours` for the day card's chart. Both include empty buckets so the
    timelines have no gaps — and both feed the Day/Week carousels as well as the Trends
-   charts.
+   charts. `recomputeAverages()` then derives the card charts' baselines from the same
+   cache: average zone minutes **per weekday** (`weekdayAverages`) and **per hour within
+   each weekday** (`hourlyAveragesByWeekday`) over the `averageWeeks = 12` most recent
+   *complete* weeks — the current partial week is excluded so it can't dilute them, and
+   the divisor is always 12 (rest days count as zero), giving a true "average Monday".
 
 `isLoading` guards against overlapping runs (early-return if already loading),
 and `lastFetchDate` records the run time to drive throttled refreshes.

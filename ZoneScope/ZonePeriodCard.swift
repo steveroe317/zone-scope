@@ -153,7 +153,17 @@ extension ZonePeriodCard where Detail == EmptyView {
         restingHeartRate: 60,
         visibleZones: Zone.all
     ) { day in
-        ZoneBarChart(points: day.hours, visibleZones: Zone.all, component: .hour)
+        ZoneBarChart(
+            points: day.hours,
+            visibleZones: Zone.all,
+            component: .hour,
+            averages: (0..<24).map { hour in
+                hour == 7 || hour == 17 || hour == 18
+                    ? ZoneMinutes(zone1: 6, zone2: 14, zone3: 10, zone4: 5, zone5: 2)
+                    : ZoneMinutes()
+            },
+            upperBound: 60
+        )
     }
 }
 
@@ -195,6 +205,15 @@ extension ZonePeriodCard where Detail == EmptyView {
         restingHeartRate: 60,
         visibleZones: Zone.all
     ) { week in
-        ZoneBarChart(points: week.days, visibleZones: Zone.all, component: .day)
+        ZoneBarChart(
+            points: week.days,
+            visibleZones: Zone.all,
+            component: .day,
+            averages: [ZoneMinutes](
+                repeating: ZoneMinutes(zone1: 24, zone2: 14, zone3: 9, zone4: 5, zone5: 2),
+                count: 7
+            ),
+            upperBound: 90
+        )
     }
 }

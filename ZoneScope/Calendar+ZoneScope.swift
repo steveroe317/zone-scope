@@ -16,4 +16,10 @@ extension Calendar {
         calendar.firstWeekday = 2 // Monday
         return calendar
     }
+
+    /// The date's weekday as an index from this calendar's first weekday
+    /// (0 = Monday … 6 = Sunday for `Calendar.zoneScope`).
+    func mondayFirstIndex(for date: Date) -> Int {
+        (component(.weekday, from: date) - firstWeekday + 7) % 7
+    }
 }
