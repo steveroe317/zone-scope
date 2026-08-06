@@ -56,6 +56,9 @@ ZoneScope/
 │   ├── DailyZoneData.swift        # One day's ZoneMinutes + 24 hours, keyed by day start
 │   ├── HourlyZoneData.swift       # One clock hour's ZoneMinutes keyed by hour start
 │   ├── Calendar+ZoneScope.swift   # Monday-first calendar (Calendar.zoneScope)
+│   ├── CachedWorkout.swift        # One workout reduced to per-hour BPM histograms
+│   ├── HourlyHeartRateHistogram.swift # Minutes per BPM in an hour; BPM → zone
+│   ├── WorkoutCacheStore.swift    # Persists the workout cache between launches
 │   ├── Signposts.swift            # os_signpost / Logger instrumentation for fetch cost
 │   ├── TimeFormatting.swift       # formatTime() free function
 │   ├── ZoneScope.entitlements     # HealthKit entitlement
@@ -108,11 +111,24 @@ model class and its file-private cache entry:
 - **`TrendGranularity`** (`TrendGranularity.swift`) — the trends bar granularity
   (`.daily`, `.weekly`), `RawRepresentable` as a `String` so the user's choice
   persists in `@AppStorage`.
-- **`CachedWorkout`** (file-private in `HealthKitManager.swift`) — a per-workout
-  cache entry recording the computed aggregate `ZoneMinutes`, a sample-accurate
-  per-hour map (`hourlyZoneMinutes`, keyed by clock-hour start, for the day chart),
-  and the max/resting HR values it was computed with, so the cache can be invalidated
-  when those inputs change.
+- **`CachedWorkout`** (`CachedWorkout.swift`) — a per-workout cache entry: its UUID,
+  start/end dates, and `histogram`. It holds **no** zone minutes and no HR parameters,
+  so an entry stays valid for the life of the workout and can be persisted.
+- **`HourlyHeartRateHistogram`** (`HourlyHeartRateHistogram.swift`) — minutes spent at
+  each whole BPM within one clock hour, plus
+  `zoneMinutes(maxHeartRate:restingHeartRate:)`. This is the single place a heart rate is
+  classified into a zone, so freshly computed and cache-derived results agree by
+  construction. Being independent of the HR parameters is what makes the cache worth
+  persisting: a resting-HR drift or a birthday costs a re-bucket, not a refetch.
+- **`WorkoutCacheStore`** (`WorkoutCacheStore.swift`) — `nonisolated` `async` load/save of
+  the cache to `Application Support/ZoneScope/workout-cache.plist` (binary plist, ~718 KB
+  for ~573 workouts). Written atomically with complete file protection and
+  `isExcludedFromBackup` — App Review prohibits storing health data in iCloud. A
+  `schemaVersion` mismatch or any decode failure discards the file and rebuilds; every
+  operation is best-effort, since the cache is purely an optimization.
+- **`ResolvedWorkout`** (file-private in `HealthKitManager.swift`) — a cached workout with
+  its zone minutes resolved against the *current* HR parameters, rebuilt on each
+  recompute.
 - **`HealthKitManager`** — a `@MainActor @Observable final class` that is the
   single source of truth for authorization state, loading state, the `weeklyHistory`
   and `dailyHistory` series (which feed both the carousels and the Trends charts),
@@ -286,31 +302,39 @@ queries return nothing, and the app shows the ordinary "No Workout Data" state
 
 This is the core of the app and is designed around an incremental,
 UUID-keyed cache (`workoutCache: [UUID: CachedWorkout]`) so that re-fetches only
-recompute what actually changed:
+recompute what actually changed. The cache is **loaded from disk in `activate()`** before
+any HealthKit access and published straight away, so a launch paints from the previous
+session instead of waiting:
 
 1. **Fetch workout metadata** for the history window (`historyStartDate`, the
    start of the week ~52 weeks ago) — a single `HKSampleQuery` for `workoutType`,
    no heart-rate data yet.
 2. **Diff UUIDs** against the cache to find added and deleted workouts.
 3. **Detect modified** workouts (same UUID, different `endDate`).
-4. **Detect invalidated** entries whose cached max/resting HR differs from the
-   current values by more than `hrParamTolerance` (0.5 BPM).
-5. **Evict** deleted, modified, and invalidated entries from the cache.
-6. **Fetch heart-rate samples and recompute zones** only for the added, modified,
-   and invalidated workouts (`fetchHRZoneMinutes` → `calculateZoneMinutes`), which
-   returns both the aggregate `ZoneMinutes` and a sample-accurate per-hour map, both
-   cached on `CachedWorkout`.
-7. **Recompute derived views** purely from the in-memory cache — no additional
-   HealthKit queries: `recomputeWeeklyHistory()` buckets cached workouts into
+4. **Evict** deleted and modified entries. There is no HR-parameter invalidation step:
+   cached histograms don't depend on max/resting heart rate.
+5. **Fetch heart-rate samples** for the added and modified workouts only
+   (`fetchHistogram` → `buildHistogram`), reducing them to per-hour BPM histograms.
+   These run concurrently in a `withTaskGroup` bounded to `maxConcurrentQueries` (6),
+   since each spends most of its time waiting on HealthKit.
+6. **Resolve and recompute** via `publishSeries()`, which maps every cached histogram
+   through `zoneMinutes(maxHeartRate:restingHeartRate:)` into `ResolvedWorkout`s and then
+   rebuilds the series (below). Pure CPU — an HR-parameter change costs only this.
+7. **Persist** the cache when it actually changed (added/modified/deleted non-empty),
+   after pruning entries older than `historyStartDate`, so routine refreshes don't
+   rewrite the file.
+
+The series rebuilt in step 6 come purely from the resolved cache — no additional
+   HealthKit queries: `recomputeWeeklyHistory(from:)` buckets workouts into
    contiguous calendar weeks (`historyWeeks = 52`) to build the `weeklyHistory`
    series — and in the same pass buckets each week's seven days (Monday–Sunday) into
-   `WeeklyZoneData.days` for the weekly card's chart — and `recomputeDailyHistory()`
+   `WeeklyZoneData.days` for the weekly card's chart — and `recomputeDailyHistory(from:)`
    buckets them into contiguous calendar days (`historyDays = 90`) to build
-   `dailyHistory`, and — from the cached per-hour maps — each day's 24 hours into
+   `dailyHistory`, and — from the resolved per-hour maps — each day's 24 hours into
    `DailyZoneData.hours` for the day card's chart. Both include empty buckets so the
    timelines have no gaps — and both feed the Day/Week carousels as well as the Trends
-   charts. `recomputeAverages()` then derives the card charts' baselines from the same
-   cache: average zone minutes **per weekday** (`weekdayAverages`) and **per hour within
+   charts. `recomputeAverages(from:)` then derives the card charts' baselines from the same
+   data: average zone minutes **per weekday** (`weekdayAverages`) and **per hour within
    each weekday** (`hourlyAveragesByWeekday`) over the `averageWeeks = 12` most recent
    *complete* weeks — the current partial week is excluded so it can't dilute them, and
    the divisor is always 12 (rest days count as zero), giving a true "average Monday".
@@ -326,21 +350,31 @@ The read path is instrumented with `OSSignposter` intervals — `Startup`,
 plus `Logger` summary lines with phase timings and workout/sample counts. All values are
 logged `.public`, so Console shows real numbers.
 
-This exists to quantify the **cold-launch cost before and after** the planned persistent
-workout cache: today `workoutCache` is in-memory only, so a cold launch issues one
-serialized heart-rate query *per workout* in the 52-week window. Read it in Console
-(filter subsystem `com.roedesigns.test.ZoneScope`) or with the **os_signpost**
+`Load cache` and `Save cache` intervals cover the persistence layer. Read it all in
+Console (filter subsystem `com.roedesigns.test.ZoneScope`) or with the **os_signpost**
 instrument. Note the Simulator has no HealthKit data — a real device is required for a
-meaningful baseline.
+meaningful measurement.
 
-### Zone calculation (`calculateZoneMinutes`)
+This quantified the cold-launch cost that motivated the persistent cache: **3.3 s across
+573 serialized heart-rate queries** (~5.8 ms each), paid on every launch because
+`workoutCache` was in-memory only. With the cache persisted, a launch should issue **0**
+heart-rate queries.
+
+### Zone calculation (`buildHistogram` → `zoneMinutes(maxHeartRate:restingHeartRate:)`)
+
+Zone math is split in two so the expensive half can be cached. `buildHistogram` reduces
+raw samples to per-hour BPM histograms (no HR parameters involved), and
+`HourlyHeartRateHistogram.zoneMinutes(maxHeartRate:restingHeartRate:)` turns those into
+zones on demand.
 
 Given time-ordered heart-rate samples for one workout:
 
 - Each sample "owns" the interval until the next sample's start (or the workout
   end for the last sample). That raw duration is **clamped to 5 minutes** to
   avoid a single stale sample inflating a zone across a gap.
-- Intensity is computed with the **Heart Rate Reserve (Karvonen)** method:
+- Those minutes are recorded against the sample's heart rate **rounded to a whole BPM**,
+  in the clock hour the sample started in.
+- Intensity is then computed with the **Heart Rate Reserve (Karvonen)** method:
   `pct = (hr − restingHR) / (maxHR − restingHR)`.
 - The percentage is bucketed into five zones at boundaries **60% / 70% / 80% /
   90%** (Zone 1 `<60%` … Zone 5 `≥90%`).
@@ -409,11 +443,16 @@ trigger no HealthKit access.
 
 ## Design notes, constraints, and trade-offs
 
-- **Minimal persistence.** Domain data (the workout cache) is in-memory only and
-  rebuilt on each cold launch — the first fetch after launch pays the full
-  HR-query cost for every workout in the past year. The only persisted state is
-  the `zoneVisibility` UI preference (a bitmask of visible zones), stored via
-  `@AppStorage`.
+- **Cached, not re-read.** The workout cache is persisted between launches
+  (`WorkoutCacheStore`), so only genuinely new workouts are read from HealthKit. It
+  stores HR-parameter-independent histograms specifically so a resting-HR drift — which
+  happens most days — can't invalidate it; that was the trap that would have made a
+  naive cache almost worthless. UI preferences (`zoneVisibility`, `trendGranularity`)
+  remain in `@AppStorage`. The cache is derived data: deleting it costs one slow launch.
+- **Whole-BPM resolution.** Histograms round heart rates to whole BPM, so a sample within
+  0.5 BPM of a zone boundary may land either side. Immaterial against the `Int`-rounded
+  boundaries already shown in the UI, and applied identically on both the fresh and
+  cached paths so results never disagree.
 - **Display-only filter.** The per-zone visibility filter changes only what is
   shown, never what is fetched or computed; the domain layer is unaware of it.
 - **Fixed ~52-week query horizon.** Everything is derived from a single
@@ -458,8 +497,9 @@ and the weekly-history work moved `ZoneMinutes` into its own file (resolving the
 type-placement item); the carousel work then removed `TimePeriod` and `zoneData`
 entirely. The force-unwraps on `HKObjectType` lookups, hardcoded frame widths in
 `ZoneRowView`, and the **no-tests** gap remain open. The pure logic added since —
-`recomputeWeeklyHistory()` / `recomputeDailyHistory()` bucketing, the
+`buildHistogram` and `HourlyHeartRateHistogram.zoneMinutes(maxHeartRate:restingHeartRate:)`,
+`recomputeWeeklyHistory(from:)` / `recomputeDailyHistory(from:)` bucketing, the
 `ZoneMinutes` `+` operator, `ZoneVisibility` (bitmask round-trip and the
-"at least one visible" invariant), `visibleTotal`, `zoneLimit(for:)`, and the
-carousel's leading-empty trim — would be straightforward to cover once a test
+"at least one visible" invariant), `visibleTotal`, `zoneLimit(for:)`, `ZoneChartScale`,
+and the carousel's leading-empty trim — would be straightforward to cover once a test
 target exists.

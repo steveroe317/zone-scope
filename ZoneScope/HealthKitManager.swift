@@ -9,16 +9,15 @@ import Foundation
 import HealthKit
 import OSLog
 
-private struct CachedWorkout {
-    let uuid: UUID
+/// A cached workout with its zone minutes resolved against the current heart-rate
+/// parameters. Rebuilt on each recompute, which is what lets a max/resting HR change
+/// cost a re-bucket instead of re-reading every workout from HealthKit.
+private struct ResolvedWorkout {
     let startDate: Date
-    let endDate: Date
     let zoneMinutes: ZoneMinutes
-    /// Sample-accurate zone minutes bucketed by the clock hour each sample fell in,
-    /// keyed by that hour's start date. Feeds the day card's per-hour chart.
+    /// Zone minutes bucketed by the clock hour they fell in, keyed by that hour's start
+    /// date. Feeds the day card's per-hour chart.
     let hourlyZoneMinutes: [Date: ZoneMinutes]
-    let cachedWithMaxHR: Double
-    let cachedWithRestingHR: Double
 }
 
 enum AccessPhase {
@@ -43,13 +42,22 @@ final class HealthKitManager {
     )
     private(set) var lastFetchDate: Date?
 
+    /// Whether there is anything to render — true as soon as the persisted cache loads,
+    /// so a cached launch paints immediately instead of showing the loading spinner.
+    var hasData: Bool {
+        !dailyHistory.isEmpty || !weeklyHistory.isEmpty
+    }
+
     private let healthStore = HKHealthStore()
     private var workoutObserverQuery: HKObserverQuery?
     var maxHeartRate: Double = 190
     var restingHeartRate: Double = 60
 
     private var workoutCache: [UUID: CachedWorkout] = [:]
-    private let hrParamTolerance: Double = 0.5
+
+    /// How many heart-rate queries may be in flight at once. Each spends most of its
+    /// time waiting on HealthKit, so overlapping them is where the speed-up comes from.
+    private let maxConcurrentQueries = 6
 
     /// Number of weeks of history fetched and shown in the weekly view.
     static let historyWeeks = 52
@@ -144,6 +152,14 @@ final class HealthKitManager {
         accessPhase = .ready
         loadMaxHeartRate()
         await loadRestingHeartRate()
+
+        // Publish whatever the last session cached before touching HealthKit, so the UI
+        // paints immediately and the refresh below just updates it in place.
+        workoutCache = await WorkoutCacheStore.load()
+        if !workoutCache.isEmpty {
+            publishSeries()
+        }
+
         startObservingWorkouts()
         await fetchAllZoneData()
     }
@@ -234,50 +250,52 @@ final class HealthKitManager {
             return cached.endDate != current.endDate
         }
 
-        // Step 4: detect HR-param-invalidated entries
-        let invalidatedIDs = Set(workoutCache.values
-            .filter {
-                abs($0.cachedWithMaxHR     - maxHeartRate)     > hrParamTolerance ||
-                abs($0.cachedWithRestingHR - restingHeartRate) > hrParamTolerance
-            }
-            .map { $0.uuid })
-
-        // Step 5: evict deleted, modified, and invalidated entries
-        for id in deletedIDs.union(modifiedIDs).union(invalidatedIDs) {
+        // Step 4: evict deleted and modified entries. Cached histograms don't depend on
+        // the heart-rate parameters, so a max/resting HR change no longer invalidates
+        // anything — it's resolved fresh in step 6.
+        for id in deletedIDs.union(modifiedIDs) {
             workoutCache.removeValue(forKey: id)
         }
 
-        // Step 6: fetch HR + compute zones for new, modified, and invalidated workouts
-        let idsToFetch      = addedIDs.union(modifiedIDs).union(invalidatedIDs)
+        // Step 5: fetch heart-rate histograms for new and modified workouts
+        let idsToFetch      = addedIDs.union(modifiedIDs)
         let workoutsToFetch = currentWorkouts.filter { idsToFetch.contains($0.uuid) }
         // These are the round trips a persistent cache would eliminate: one per workout,
         // serialized, and on a cold launch that means every workout in the window.
         let heartRateInterval = signposter.beginInterval("Heart-rate queries", id: signposter.makeSignpostID())
         var sampleCount = 0
-        for workout in workoutsToFetch {
-            let zones = await fetchHRZoneMinutes(for: workout)
-            sampleCount += zones.sampleCount
-            workoutCache[workout.uuid] = CachedWorkout(
-                uuid:                workout.uuid,
-                startDate:           workout.startDate,
-                endDate:             workout.endDate,
-                zoneMinutes:         zones.aggregate,
-                hourlyZoneMinutes:   zones.hourly,
-                cachedWithMaxHR:     maxHeartRate,
-                cachedWithRestingHR: restingHeartRate
-            )
+        await withTaskGroup(of: (CachedWorkout, Int).self) { group in
+            var pending = workoutsToFetch.makeIterator()
+            var running = 0
+            while running < maxConcurrentQueries, let workout = pending.next() {
+                group.addTask { await self.fetchHistogram(for: workout) }
+                running += 1
+            }
+            while let (cached, samples) = await group.next() {
+                workoutCache[cached.uuid] = cached
+                sampleCount += samples
+                if let workout = pending.next() {
+                    group.addTask { await self.fetchHistogram(for: workout) }
+                }
+            }
         }
         signposter.endInterval("Heart-rate queries", heartRateInterval)
         let afterHeartRate = clock.now
 
-        // Step 7: recompute weekly and daily history from cache — no HealthKit queries
+        // Step 6: resolve zones from the cached histograms and recompute the series —
+        // no HealthKit queries
         let recomputeInterval = signposter.beginInterval("Recompute series", id: signposter.makeSignpostID())
-        weeklyHistory = recomputeWeeklyHistory()
-        dailyHistory = recomputeDailyHistory()
-        let averages = recomputeAverages()
-        weekdayAverages = averages.weekday
-        hourlyAveragesByWeekday = averages.hourly
+        publishSeries()
         signposter.endInterval("Recompute series", recomputeInterval)
+
+        // Step 7: persist the cache when it actually changed, so routine refreshes don't
+        // rewrite the whole file
+        if !addedIDs.isEmpty || !modifiedIDs.isEmpty || !deletedIDs.isEmpty {
+            let cutoff = historyStartDate
+            let retained = workoutCache.values.filter { $0.startDate >= cutoff }
+            workoutCache = Dictionary(uniqueKeysWithValues: retained.map { ($0.uuid, $0) })
+            await WorkoutCacheStore.save(retained)
+        }
 
         let finished = clock.now
         signposter.endInterval("Fetch zone data", fetchInterval)
@@ -290,6 +308,28 @@ final class HealthKitManager {
             heart rate \(Signposts.milliseconds(afterMetadata, afterHeartRate), format: .fixed(precision: 1), privacy: .public) ms, \
             recompute \(Signposts.milliseconds(afterHeartRate, finished), format: .fixed(precision: 1), privacy: .public) ms
             """)
+    }
+
+    /// Resolves every cached workout's histogram against the current heart-rate
+    /// parameters and republishes the derived series. Pure CPU — no HealthKit access —
+    /// so it's cheap enough to run whenever the cache or those parameters change.
+    private func publishSeries() {
+        let resolved = workoutCache.values.map { cached in
+            var aggregate = ZoneMinutes()
+            var hourly: [Date: ZoneMinutes] = [:]
+            for hour in cached.histogram {
+                let minutes = hour.zoneMinutes(maxHeartRate: maxHeartRate, restingHeartRate: restingHeartRate)
+                aggregate += minutes
+                hourly[hour.hourStart, default: ZoneMinutes()] += minutes
+            }
+            return ResolvedWorkout(startDate: cached.startDate, zoneMinutes: aggregate, hourlyZoneMinutes: hourly)
+        }
+
+        weeklyHistory = recomputeWeeklyHistory(from: resolved)
+        dailyHistory = recomputeDailyHistory(from: resolved)
+        let averages = recomputeAverages(from: resolved)
+        weekdayAverages = averages.weekday
+        hourlyAveragesByWeekday = averages.hourly
     }
 
     private func fetchWorkoutObjects(since startDate: Date) async -> [HKWorkout] {
@@ -313,7 +353,7 @@ final class HealthKitManager {
 
     /// Buckets cached workouts into contiguous calendar weeks across the history window,
     /// including empty weeks so the timeline has no gaps.
-    private func recomputeWeeklyHistory() -> [WeeklyZoneData] {
+    private func recomputeWeeklyHistory(from resolved: [ResolvedWorkout]) -> [WeeklyZoneData] {
         let calendar = Calendar.zoneScope
         let now = Date()
         let start = historyStartDate
@@ -326,7 +366,7 @@ final class HealthKitManager {
 
         var buckets: [Date: ZoneMinutes] = Dictionary(uniqueKeysWithValues: weekStarts.map { ($0, ZoneMinutes()) })
         var dayBuckets: [Date: ZoneMinutes] = [:]
-        for entry in workoutCache.values {
+        for entry in resolved {
             if let weekStart = calendar.dateInterval(of: .weekOfYear, for: entry.startDate)?.start,
                buckets[weekStart] != nil {
                 buckets[weekStart]? += entry.zoneMinutes
@@ -345,7 +385,7 @@ final class HealthKitManager {
 
     /// Buckets cached workouts into contiguous calendar days across the daily window,
     /// including empty days so the timeline has no gaps.
-    private func recomputeDailyHistory() -> [DailyZoneData] {
+    private func recomputeDailyHistory(from resolved: [ResolvedWorkout]) -> [DailyZoneData] {
         let calendar = Calendar.current
         let start = dailyHistoryStartDate
 
@@ -355,7 +395,7 @@ final class HealthKitManager {
 
         var buckets: [Date: ZoneMinutes] = Dictionary(uniqueKeysWithValues: dayStarts.map { ($0, ZoneMinutes()) })
         var hourBuckets: [Date: ZoneMinutes] = [:]
-        for entry in workoutCache.values {
+        for entry in resolved {
             let dayStart = calendar.startOfDay(for: entry.startDate)
             if buckets[dayStart] != nil {
                 buckets[dayStart]? += entry.zoneMinutes
@@ -378,7 +418,7 @@ final class HealthKitManager {
     /// `averageWeeks` most recent *complete* weeks — the current partial week is excluded
     /// so it can't dilute the averages. Rest days count as zero (the divisor is always
     /// the full week count), giving a true "average Monday" that active days exceed.
-    private func recomputeAverages() -> (weekday: [ZoneMinutes], hourly: [[ZoneMinutes]]) {
+    private func recomputeAverages(from resolved: [ResolvedWorkout]) -> (weekday: [ZoneMinutes], hourly: [[ZoneMinutes]]) {
         let calendar = Calendar.zoneScope
         let now = Date()
         let windowEnd = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
@@ -387,7 +427,7 @@ final class HealthKitManager {
         var weekdaySums = [ZoneMinutes](repeating: ZoneMinutes(), count: 7)
         var hourlySums = [[ZoneMinutes]](repeating: [ZoneMinutes](repeating: ZoneMinutes(), count: 24), count: 7)
 
-        for entry in workoutCache.values where entry.startDate >= windowStart && entry.startDate < windowEnd {
+        for entry in resolved where entry.startDate >= windowStart && entry.startDate < windowEnd {
             weekdaySums[calendar.mondayFirstIndex(for: entry.startDate)] += entry.zoneMinutes
             for (hourStart, minutes) in entry.hourlyZoneMinutes {
                 let weekday = calendar.mondayFirstIndex(for: hourStart)
@@ -403,7 +443,9 @@ final class HealthKitManager {
         )
     }
 
-    private func fetchHRZoneMinutes(for workout: HKWorkout) async -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes], sampleCount: Int) {
+    /// Reads a workout's heart-rate samples and reduces them to per-hour BPM histograms,
+    /// returning the sample count for the signpost summary.
+    private func fetchHistogram(for workout: HKWorkout) async -> (CachedWorkout, Int) {
         let signposter = Signposts.healthKit
         let interval = signposter.beginInterval("Heart-rate query", id: signposter.makeSignpostID())
         defer { signposter.endInterval("Heart-rate query", interval) }
@@ -427,46 +469,40 @@ final class HealthKitManager {
             healthStore.execute(query)
         }
 
-        let zones = calculateZoneMinutes(from: samples, workoutEnd: workout.endDate)
-        return (zones.aggregate, zones.hourly, samples.count)
+        let cached = CachedWorkout(
+            uuid: workout.uuid,
+            startDate: workout.startDate,
+            endDate: workout.endDate,
+            histogram: buildHistogram(from: samples, workoutEnd: workout.endDate)
+        )
+        return (cached, samples.count)
     }
 
-    /// Computes a workout's total zone minutes and, in the same pass, its zone minutes
-    /// bucketed by the clock hour each sample fell in (for the day card's hourly chart).
-    private func calculateZoneMinutes(from samples: [HKQuantitySample], workoutEnd: Date) -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes]) {
-        var aggregate = ZoneMinutes()
-        var hourly: [Date: ZoneMinutes] = [:]
+    /// Reduces a workout's heart-rate samples to minutes spent at each whole BPM within
+    /// each clock hour.
+    ///
+    /// Each sample owns the interval until the next one starts (or the workout's end),
+    /// clamped to 5 minutes so a single stale sample can't inflate a gap. The result
+    /// deliberately carries no zone information — zones are derived later from the
+    /// current max/resting heart rate, which is what keeps the cache valid when those
+    /// change.
+    private func buildHistogram(from samples: [HKQuantitySample], workoutEnd: Date) -> [HourlyHeartRateHistogram] {
+        var byHour: [Date: [Int: Double]] = [:]
         let calendar = Calendar.zoneScope
         let beatsPerMinute = HKUnit.count().unitDivided(by: .minute())
 
-        for (i, sample) in samples.enumerated() {
-            let nextStart = i + 1 < samples.count ? samples[i + 1].startDate : workoutEnd
+        for (index, sample) in samples.enumerated() {
+            let nextStart = index + 1 < samples.count ? samples[index + 1].startDate : workoutEnd
             let rawDuration = nextStart.timeIntervalSince(sample.startDate)
-            let clampedDuration = min(rawDuration, 5 * 60)
-            let minutes = clampedDuration / 60
+            let minutes = min(rawDuration, 5 * 60) / 60
 
-            let hr = sample.quantity.doubleValue(for: beatsPerMinute)
-            let hrr = maxHeartRate - restingHeartRate
-            let pct = (hr - restingHeartRate) / hrr
-
-            let zone: Int
-            if pct < 0.60 {
-                zone = 1
-            } else if pct < 0.70 {
-                zone = 2
-            } else if pct < 0.80 {
-                zone = 3
-            } else if pct < 0.90 {
-                zone = 4
-            } else {
-                zone = 5
-            }
-
-            aggregate.add(minutes, toZone: zone)
-            if let hourStart = calendar.dateInterval(of: .hour, for: sample.startDate)?.start {
-                hourly[hourStart, default: ZoneMinutes()].add(minutes, toZone: zone)
-            }
+            let bpm = Int(sample.quantity.doubleValue(for: beatsPerMinute).rounded())
+            guard let hourStart = calendar.dateInterval(of: .hour, for: sample.startDate)?.start else { continue }
+            byHour[hourStart, default: [:]][bpm, default: 0] += minutes
         }
-        return (aggregate, hourly)
+
+        return byHour
+            .map { HourlyHeartRateHistogram(hourStart: $0.key, minutesByBPM: $0.value) }
+            .sorted { $0.hourStart < $1.hourStart }
     }
 }

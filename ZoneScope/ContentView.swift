@@ -38,12 +38,17 @@ struct ContentView: View {
         )
     }
 
+    /// Whether there is anything to render yet. The persisted cache usually satisfies
+    /// this immediately, so a launch paints charts instead of a spinner, and background
+    /// refreshes update in place rather than covering the screen again.
+    private var isDataReady: Bool {
+        healthKit.hasData || !(healthKit.isLoading || healthKit.lastFetchDate == nil)
+    }
+
     /// Whether the Trends charts are currently on screen — gates the bottom
     /// granularity control so it appears only alongside them.
     private var isShowingTrends: Bool {
-        selectedMode == .history
-            && healthKit.accessPhase == .ready
-            && !(healthKit.isLoading || healthKit.lastFetchDate == nil)
+        selectedMode == .history && healthKit.accessPhase == .ready && isDataReady
     }
 
     private func visibilityBinding(for number: Int) -> Binding<Bool> {
@@ -80,7 +85,7 @@ struct ContentView: View {
                                 Task { await healthKit.requestAuthorization() }
                             }
                         case .ready:
-                            if healthKit.isLoading || healthKit.lastFetchDate == nil {
+                            if !isDataReady {
                                 ProgressView("Loading zone data…")
                             } else {
                                 switch selectedMode {
