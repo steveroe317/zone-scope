@@ -56,6 +56,7 @@ ZoneScope/
 │   ├── DailyZoneData.swift        # One day's ZoneMinutes + 24 hours, keyed by day start
 │   ├── HourlyZoneData.swift       # One clock hour's ZoneMinutes keyed by hour start
 │   ├── Calendar+ZoneScope.swift   # Monday-first calendar (Calendar.zoneScope)
+│   ├── Signposts.swift            # os_signpost / Logger instrumentation for fetch cost
 │   ├── TimeFormatting.swift       # formatTime() free function
 │   ├── ZoneScope.entitlements     # HealthKit entitlement
 │   └── Assets.xcassets/           # App icon, accent color
@@ -316,6 +317,21 @@ recompute what actually changed:
 
 `isLoading` guards against overlapping runs (early-return if already loading),
 and `lastFetchDate` records the run time to drive throttled refreshes.
+
+### Measuring the fetch (`Signposts.swift`)
+
+The read path is instrumented with `OSSignposter` intervals — `Startup`,
+`Fetch zone data`, `Workout metadata query`, `Heart-rate queries` (with a nested
+`Heart-rate query` per workout), `Resting heart-rate query`, and `Recompute series` —
+plus `Logger` summary lines with phase timings and workout/sample counts. All values are
+logged `.public`, so Console shows real numbers.
+
+This exists to quantify the **cold-launch cost before and after** the planned persistent
+workout cache: today `workoutCache` is in-memory only, so a cold launch issues one
+serialized heart-rate query *per workout* in the 52-week window. Read it in Console
+(filter subsystem `com.roedesigns.test.ZoneScope`) or with the **os_signpost**
+instrument. Note the Simulator has no HealthKit data — a real device is required for a
+meaningful baseline.
 
 ### Zone calculation (`calculateZoneMinutes`)
 

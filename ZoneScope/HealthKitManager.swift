@@ -7,6 +7,7 @@
 
 import Foundation
 import HealthKit
+import OSLog
 
 private struct CachedWorkout {
     let uuid: UUID
@@ -90,6 +91,21 @@ final class HealthKitManager {
     /// the user was already asked in a prior session we skip the prompt entirely
     /// and load data immediately; otherwise we surface the explainer.
     func start() async {
+        // Spans the whole launch path, so this interval is the headline "time until the
+        // app has data" measurement to compare before and after caching changes.
+        let signposter = Signposts.healthKit
+        let interval = signposter.beginInterval("Startup", id: signposter.makeSignpostID())
+        let started = ContinuousClock().now
+        Signposts.logger.notice("Startup began")
+        defer {
+            signposter.endInterval("Startup", interval)
+            let elapsed = Signposts.milliseconds(started, ContinuousClock().now)
+            Signposts.logger.notice("""
+                Startup completed in \(elapsed, format: .fixed(precision: 1), privacy: .public) ms \
+                (phase: \(String(describing: self.accessPhase), privacy: .public))
+                """)
+        }
+
         guard isHealthKitAvailable else {
             accessPhase = .needsAuthorization
             return
@@ -145,6 +161,10 @@ final class HealthKitManager {
     }
 
     private func loadRestingHeartRate() async {
+        let signposter = Signposts.healthKit
+        let interval = signposter.beginInterval("Resting heart-rate query", id: signposter.makeSignpostID())
+        defer { signposter.endInterval("Resting heart-rate query", interval) }
+
         guard let type = HKObjectType.quantityType(forIdentifier: .restingHeartRate) else { return }
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
 
@@ -189,8 +209,16 @@ final class HealthKitManager {
         isLoading = true
         defer { isLoading = false }
 
+        let signposter = Signposts.healthKit
+        let fetchInterval = signposter.beginInterval("Fetch zone data", id: signposter.makeSignpostID())
+        let clock = ContinuousClock()
+        let started = clock.now
+
         // Step 1: fetch workout metadata for the history window — 1 query, no HR data
+        let metadataInterval = signposter.beginInterval("Workout metadata query", id: signposter.makeSignpostID())
         let currentWorkouts = await fetchWorkoutObjects(since: historyStartDate)
+        signposter.endInterval("Workout metadata query", metadataInterval)
+        let afterMetadata = clock.now
 
         // Step 2: diff UUIDs
         let currentIDs = Set(currentWorkouts.map { $0.uuid })
@@ -222,8 +250,13 @@ final class HealthKitManager {
         // Step 6: fetch HR + compute zones for new, modified, and invalidated workouts
         let idsToFetch      = addedIDs.union(modifiedIDs).union(invalidatedIDs)
         let workoutsToFetch = currentWorkouts.filter { idsToFetch.contains($0.uuid) }
+        // These are the round trips a persistent cache would eliminate: one per workout,
+        // serialized, and on a cold launch that means every workout in the window.
+        let heartRateInterval = signposter.beginInterval("Heart-rate queries", id: signposter.makeSignpostID())
+        var sampleCount = 0
         for workout in workoutsToFetch {
             let zones = await fetchHRZoneMinutes(for: workout)
+            sampleCount += zones.sampleCount
             workoutCache[workout.uuid] = CachedWorkout(
                 uuid:                workout.uuid,
                 startDate:           workout.startDate,
@@ -234,13 +267,29 @@ final class HealthKitManager {
                 cachedWithRestingHR: restingHeartRate
             )
         }
+        signposter.endInterval("Heart-rate queries", heartRateInterval)
+        let afterHeartRate = clock.now
 
         // Step 7: recompute weekly and daily history from cache — no HealthKit queries
+        let recomputeInterval = signposter.beginInterval("Recompute series", id: signposter.makeSignpostID())
         weeklyHistory = recomputeWeeklyHistory()
         dailyHistory = recomputeDailyHistory()
         let averages = recomputeAverages()
         weekdayAverages = averages.weekday
         hourlyAveragesByWeekday = averages.hourly
+        signposter.endInterval("Recompute series", recomputeInterval)
+
+        let finished = clock.now
+        signposter.endInterval("Fetch zone data", fetchInterval)
+        Signposts.logger.notice("""
+            Fetched zone data in \(Signposts.milliseconds(started, finished), format: .fixed(precision: 1), privacy: .public) ms — \
+            \(currentWorkouts.count, privacy: .public) workouts in window, \
+            \(workoutsToFetch.count, privacy: .public) needed heart-rate queries \
+            (\(sampleCount, privacy: .public) samples) | \
+            metadata \(Signposts.milliseconds(started, afterMetadata), format: .fixed(precision: 1), privacy: .public) ms, \
+            heart rate \(Signposts.milliseconds(afterMetadata, afterHeartRate), format: .fixed(precision: 1), privacy: .public) ms, \
+            recompute \(Signposts.milliseconds(afterHeartRate, finished), format: .fixed(precision: 1), privacy: .public) ms
+            """)
     }
 
     private func fetchWorkoutObjects(since startDate: Date) async -> [HKWorkout] {
@@ -354,7 +403,11 @@ final class HealthKitManager {
         )
     }
 
-    private func fetchHRZoneMinutes(for workout: HKWorkout) async -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes]) {
+    private func fetchHRZoneMinutes(for workout: HKWorkout) async -> (aggregate: ZoneMinutes, hourly: [Date: ZoneMinutes], sampleCount: Int) {
+        let signposter = Signposts.healthKit
+        let interval = signposter.beginInterval("Heart-rate query", id: signposter.makeSignpostID())
+        defer { signposter.endInterval("Heart-rate query", interval) }
+
         let predicate = HKQuery.predicateForSamples(
             withStart: workout.startDate,
             end: workout.endDate,
@@ -374,7 +427,8 @@ final class HealthKitManager {
             healthStore.execute(query)
         }
 
-        return calculateZoneMinutes(from: samples, workoutEnd: workout.endDate)
+        let zones = calculateZoneMinutes(from: samples, workoutEnd: workout.endDate)
+        return (zones.aggregate, zones.hourly, samples.count)
     }
 
     /// Computes a workout's total zone minutes and, in the same pass, its zone minutes
