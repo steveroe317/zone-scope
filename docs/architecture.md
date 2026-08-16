@@ -160,7 +160,7 @@ project's style guidelines):
   Daily · Weekly control itself lives in `ContentView`'s bottom bar.
 - **`AboutView`** — a sheet (grouped `List`) with the app intro, a Features list
   (built from `AboutFeatureRow`s), how zones are calculated, a privacy note, the
-  experimental/Claude Code note, and the bundle version. Depends on no HealthKit
+  health disclaimer, and the bundle version. Depends on no HealthKit
   data, so it's fully previewable and Simulator-testable.
 - **`ZonePeriodCarousel`** — the Day/Week mode. A horizontally paged carousel
   (`ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` +
