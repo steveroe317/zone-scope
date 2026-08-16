@@ -23,7 +23,7 @@ Health.
 
 ## Requirements
 
-- iOS 26+
+- iOS 26.0+, iPhone and iPad
 - Swift 6.3 / SwiftUI
 - A device with Apple Health workout + heart-rate data (HealthKit is unavailable
   in the Simulator)

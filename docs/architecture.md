@@ -14,7 +14,7 @@ interest. It is a read-only client of Apple Health: it writes nothing back, has
 no network layer, no accounts, and stores no domain data of its own — it persists
 two UI preferences (which zones are visible, and the Trends granularity) via `@AppStorage`.
 
-- **Platform:** iOS 26.2+ (deployment target)
+- **Platform:** iOS 26.0+ (deployment target), iPhone and iPad
 - **Language / UI:** Swift, SwiftUI, with `@Observable` for shared state
 - **Data source:** HealthKit (`HKHealthStore`)
 - **Concurrency:** Swift structured concurrency (`async/await`), with
@@ -23,7 +23,7 @@ two UI preferences (which zones are visible, and the Trends granularity) via `@A
 - **Dependencies:** None third-party. Uses the first-party **Swift Charts**
   (`import Charts`) framework for the daily and weekly history charts; no Swift
   Package dependencies.
-- **Bundle identifier:** `com.roedesigns.test.ZoneScope`
+- **Bundle identifier:** `com.roedesigns.zonescope`
 
 ## File structure
 
@@ -351,7 +351,7 @@ plus `Logger` summary lines with phase timings and workout/sample counts. All va
 logged `.public`, so Console shows real numbers.
 
 `Load cache` and `Save cache` intervals cover the persistence layer. Read it all in
-Console (filter subsystem `com.roedesigns.test.ZoneScope`) or with the **os_signpost**
+Console (filter subsystem `com.roedesigns.zonescope`) or with the **os_signpost**
 instrument. Note the Simulator has no HealthKit data — a real device is required for a
 meaningful measurement.
 

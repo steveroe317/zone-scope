@@ -12,7 +12,7 @@ import OSLog
 ///
 /// Two ways to read the results:
 ///
-/// - **Console.app** — connect the device, filter on subsystem `com.roedesigns.test.ZoneScope`,
+/// - **Console.app** — connect the device, filter on subsystem `com.roedesigns.zonescope`,
 ///   and read the `Startup began` / `Startup completed…` / `Fetched zone data…` summary
 ///   lines. Every value is logged `.public` so it isn't redacted, and the summaries use
 ///   `.notice` (the default level) so they appear without enabling "Include Info
@@ -25,7 +25,7 @@ import OSLog
 /// Signposts are cheap and safe to leave enabled in Release; disable by swapping the
 /// signposter for `OSSignposter(logHandle: .disabled)` if that ever changes.
 nonisolated enum Signposts {
-    private static let subsystem = "com.roedesigns.test.ZoneScope"
+    private static let subsystem = "com.roedesigns.zonescope"
 
     /// Intervals for the HealthKit fetch path.
     static let healthKit = OSSignposter(subsystem: subsystem, category: "HealthKit")
