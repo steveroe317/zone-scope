@@ -2,3 +2,6 @@
 
 @AGENTS.md
 
+## Build guidelines
+
+@SCHEMES.md
