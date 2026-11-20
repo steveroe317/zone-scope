@@ -143,7 +143,10 @@ There is not one `accessibility*` modifier anywhere in the codebase.
 
 ### Testing
 
-- [ ] **There is no test target at all** — not a thin suite, zero. Also flagged in April.
+- [ ] **Test coverage is minimal.** The `ZoneScopeTests` target (Swift Testing, run by the
+      `ZoneScope-Development` scheme through `ZoneScope.xctestplan`) was added 2026-11-20, but
+      so far it only covers `ZoneVisibility`'s never-empty invariant and its bitmask round-trip.
+      Also flagged in April.
       The complication: most testable logic (`buildHistogram`, `recomputeWeeklyHistory`,
       `recomputeDailyHistory`, `recomputeAverages`) is `private` inside a `@MainActor`
       class, so it needs extraction into pure `nonisolated` functions first.
@@ -153,7 +156,7 @@ There is not one `accessibility*` modifier anywhere in the codebase.
         (`HealthKitManager.swift:489-507`)
       - Week and day bucketing (`:356-415`)
       - The averaging window's exclusion of the current partial week (`:421-444`)
-      - `ZoneVisibility`'s never-empty invariant
+      - ~~`ZoneVisibility`'s never-empty invariant~~ (done)
       - `ZoneChartScale`
       - `formatTime`
 

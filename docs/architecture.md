@@ -63,7 +63,11 @@ ZoneScope/
 │   ├── TimeFormatting.swift       # formatTime() free function
 │   ├── ZoneScope.entitlements     # HealthKit entitlement
 │   └── Assets.xcassets/           # App icon, accent color
-├── ZoneScope.xcodeproj/           # Xcode project (single app target)
+├── ZoneScopeTests/                # Swift Testing unit tests (hosted in the app)
+├── Config/                        # .xcconfig files — all build settings live here
+├── ZoneScope.xcodeproj/           # Xcode project: app + unit test target,
+│                                  #   ZoneScope-Development / -Production schemes
+├── ZoneScope.xctestplan           # Test plan used by ZoneScope-Development
 ├── design/                        # App-icon concepts (SVG / Pixelmator source)
 ├── docs/
 │   ├── architecture.md            # This document
@@ -71,7 +75,30 @@ ZoneScope/
 ├── AGENTS.md / CLAUDE.md          # Swift/SwiftUI style guidelines for AI agents
 ```
 
-There is a single application target and **no test target**.
+There is one application target, `ZoneScope` (iPhone and iPad), and one unit test
+target, `ZoneScopeTests`, which uses Swift Testing and is hosted in the app so it
+can `@testable import ZoneScope`.
+
+### Build configuration
+
+Following [`SCHEMES.md`](../SCHEMES.md), every build setting lives in `Config/`, and
+all `buildSettings` blocks in `project.pbxproj` are empty:
+
+- `Project-Shared.xcconfig`: platform, signing team, Swift language and
+  concurrency settings, and compiler warnings shared by every target.
+- `Project-Debug.xcconfig` / `Project-Release.xcconfig`: include the shared file
+  and add the per-configuration optimization and debug-info settings.
+- `ZoneScope.xcconfig` / `ZoneScopeTests.xcconfig`: per-target identity,
+  Info.plist keys, entitlements, and the test host.
+
+`Config/` sits outside the synchronized `ZoneScope/` folder on purpose. Anything
+placed inside `ZoneScope/` gets copied into the app bundle.
+
+There are two shared schemes, split by environment:
+
+- **ZoneScope-Development** builds the app and tests. Run, Test, and Analyze use
+  Debug; Profile and Archive use Release. Tests run from `ZoneScope.xctestplan`.
+- **ZoneScope-Production** is for archiving only (Release) and builds no tests.
 
 ## Layered design
 
@@ -496,10 +523,10 @@ the `Array(zones.enumerated())` violation and made the zone list a `static let`,
 and the weekly-history work moved `ZoneMinutes` into its own file (resolving the
 type-placement item); the carousel work then removed `TimePeriod` and `zoneData`
 entirely. The force-unwraps on `HKObjectType` lookups, hardcoded frame widths in
-`ZoneRowView`, and the **no-tests** gap remain open. The pure logic added since —
+`ZoneRowView` remain open. A test target now exists (`ZoneScopeTests`), but so far it
+only covers `ZoneVisibility`. The pure logic added since —
 `buildHistogram` and `HourlyHeartRateHistogram.zoneMinutes(maxHeartRate:restingHeartRate:)`,
 `recomputeWeeklyHistory(from:)` / `recomputeDailyHistory(from:)` bucketing, the
 `ZoneMinutes` `+` operator, `ZoneVisibility` (bitmask round-trip and the
 "at least one visible" invariant), `visibleTotal`, `zoneLimit(for:)`, `ZoneChartScale`,
-and the carousel's leading-empty trim — would be straightforward to cover once a test
-target exists.
+and the carousel's leading-empty trim — are the next candidates for coverage.
