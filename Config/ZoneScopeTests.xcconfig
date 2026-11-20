@@ -1,0 +1,19 @@
+//
+//  ZoneScopeTests.xcconfig
+//  ZoneScope
+//
+//  Target-level settings for the ZoneScopeTests unit test bundle, used by
+//  both Debug and Release. Inherits everything in Project-Debug /
+//  Project-Release, including the Swift language and concurrency settings.
+//
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = com.roedesigns.zonescope.tests
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+GENERATE_INFOPLIST_FILE = YES
+
+// Host the tests inside the app so `@testable import ZoneScope` works.
+TEST_HOST = $(BUILT_PRODUCTS_DIR)/ZoneScope.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ZoneScope
+BUNDLE_LOADER = $(TEST_HOST)
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks @loader_path/Frameworks

@@ -1,0 +1,24 @@
+{
+  "configurations" : [
+    {
+      "id" : "9C2E4B1A-7D3F-4E8A-B5C6-1F2A3B4C5D6E",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:ZoneScope.xcodeproj",
+        "identifier" : "5A1C00010000000000000009",
+        "name" : "ZoneScopeTests"
+      }
+    }
+  ],
+  "version" : 1
+}
