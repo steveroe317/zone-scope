@@ -212,9 +212,9 @@ from iPhone.
 
 Run this track in parallel with Phases 1–3; it has the longest lead time.
 
-- [ ] Apple Developer Program membership active on team `D566793B9V`
-- [ ] App ID `com.roedesigns.zonescope` registered with the HealthKit capability
-- [ ] App record created; the name "ZoneScope" confirmed available
+- [x] Apple Developer Program membership active on team `D566793B9V`
+- [x] App ID `com.roedesigns.zonescope` registered with the HealthKit capability
+- [x] App record created; the name "ZoneScope" confirmed available
 - [ ] App icon delivered (see Phase 1)
 - [ ] **Screenshots captured on real devices with real Health data** — 6.9" iPhone **and**
       13" iPad, both now required. HealthKit does not run in the Simulator, so there is no
