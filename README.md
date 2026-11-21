@@ -18,8 +18,8 @@ training zones.
   focus on what matters.
 
 Zones are computed from raw heart-rate samples using the Heart Rate Reserve
-(Karvonen) method, with your max HR estimated from age and resting HR read from
-Health.
+(Karvonen) method. Max HR is estimated from age (220 − age, or 190 bpm if Health
+has no birth date), and resting HR is read from Health (60 bpm if none is recorded).
 
 ## Requirements
 

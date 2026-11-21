@@ -56,7 +56,7 @@ struct AboutView: View {
                 }
 
                 Section("How zones are calculated") {
-                    Text("Zones come from your heart-rate samples using the Heart Rate Reserve (Karvonen) method — (HR − resting) ÷ (max − resting) — split into five zones at 60%, 70%, 80%, and 90%. Maximum heart rate is estimated from your age; resting heart rate comes from Health.")
+                    Text("Zones come from your heart-rate samples using the Heart Rate Reserve (Karvonen) method — (HR − resting) ÷ (max − resting) — split into five zones at 60%, 70%, 80%, and 90%. Maximum heart rate is estimated from your age (220 − age), or 190 bpm if Health has no birth date; resting heart rate comes from Health, or 60 bpm if none is recorded.")
                         .font(.subheadline)
                 }
 
@@ -66,7 +66,7 @@ struct AboutView: View {
                 }
 
                 Section {
-                    Text("ZoneScope is not a medical device and does not provide medical advice. Zone boundaries are estimates — your maximum heart rate is calculated from your age rather than measured, and heart-rate readings from wearables can be inaccurate. Consult a healthcare professional before changing how you train, and don't rely on ZoneScope to diagnose or treat any condition.")
+                    Text("ZoneScope is not a medical device and does not provide medical advice. Zone boundaries are estimates: your maximum heart rate is calculated from your age (220 − age) rather than measured, or set to 190 bpm if Health has no birth date, and your resting heart rate defaults to 60 bpm if Health has none. Heart-rate readings from wearables can also be inaccurate. Consult a healthcare professional before changing how you train, and don't rely on ZoneScope to diagnose or treat any condition.")
                         .font(.subheadline)
                 } header: {
                     Text("Important")

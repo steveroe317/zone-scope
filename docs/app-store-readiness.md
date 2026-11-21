@@ -34,7 +34,7 @@ iPhone **and** iPad · minimum iOS **26.0**.
 
 - [x] **Draft the privacy policy.** Source text is in
       [`privacy-policy.md`](privacy-policy.md).
-- [ ] **Host the privacy policy and record its URL in App Store Connect.** Mandatory for
+- [x] **Host the privacy policy and record its URL in App Store Connect.** Mandatory for
       every app, and Guideline 5.1.3 applies it specifically to HealthKit apps. Still needs
       a public URL and a contact address filled into the draft. This is the one item with a
       real-world hosting dependency — start it early.
@@ -42,7 +42,7 @@ iPhone **and** iPad · minimum iOS **26.0**.
 - [x] **Replace the bundle identifier.** Now `com.roedesigns.zonescope` in both
       configurations. It also appears as the `OSLog` subsystem in `Signposts.swift:15,28`,
       which was updated to match.
-- [ ] **Register the App ID** for `com.roedesigns.zonescope` in the developer portal with
+- [x] **Register the App ID** for `com.roedesigns.zonescope` in the developer portal with
       the HealthKit capability enabled.
 
 - [x] **Reconcile the development team.** All four `DEVELOPMENT_TEAM` entries (project and
@@ -60,16 +60,22 @@ iPhone **and** iPad · minimum iOS **26.0**.
       Verified with a clean build: nothing in the codebase required 26.2.
 
 - [x] **Remove the "not for distribution" copy** from the About sheet, the README banner,
-      and the architecture doc.
+      and the architecture doc. Done in `eb4a816`: the About sheet note was replaced by the
+      health disclaimer below, the README banner is now a pre-release status line, and the
+      architecture doc describes the disclaimer. A grep on 2026-11-20 found no remaining
+      "not for distribution" or experimental copy.
 
 - [x] **Set export compliance.** `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO` in both
       configurations; verified as `ITSAppUsesNonExemptEncryption = false` in the built
       `Info.plist`.
 
-- [x] **Add a health disclaimer.** The About sheet now carries an "Important" section
+- [x] **Add a health disclaimer.** The About sheet carries an "Important" section
       stating that ZoneScope is not a medical device, that zone boundaries are estimates
-      (max HR is derived from age at `HealthKitManager.swift:167-177`, not measured), and
-      that wearable heart-rate readings can be inaccurate.
+      (max HR is `220 − age` at `HealthKitManager.swift:167-177`, not measured), and that
+      wearable heart-rate readings can be inaccurate. On 2026-11-20 it was reworded to also
+      state the fallbacks: 190 bpm max HR when Health has no birth date, and 60 bpm resting
+      HR when Health has no resting-HR sample. "How zones are calculated" and the README
+      match.
 
 - [ ] **Complete the app icon.** `AppIcon.appiconset` contains one 1024×1024 PNG and the
       dark and tinted appearance slots are declared but empty. iOS 26 expects an Icon
