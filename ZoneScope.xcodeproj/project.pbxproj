@@ -224,6 +224,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5A1C00010000000000000003 /* Project-Debug.xcconfig */;
 			buildSettings = {
+				DEVELOPMENT_TEAM = D566793B9V;
 			};
 			name = Debug;
 		};
@@ -231,6 +232,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5A1C00010000000000000004 /* Project-Release.xcconfig */;
 			buildSettings = {
+				DEVELOPMENT_TEAM = D566793B9V;
 			};
 			name = Release;
 		};
@@ -238,6 +240,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5A1C00010000000000000005 /* ZoneScope.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 			};
 			name = Debug;
 		};
@@ -245,6 +248,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5A1C00010000000000000005 /* ZoneScope.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 			};
 			name = Release;
 		};
