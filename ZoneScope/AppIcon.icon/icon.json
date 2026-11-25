@@ -1,19 +1,32 @@
 {
   "fill" : {
-    "solid" : "extended-gray:0.50000,1.00000"
+    "solid" : "extended-gray:1.00000,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
-          "image-name" : "magnifying glass 2.svg",
-          "name" : "magnifying glass 2",
-          "opacity" : 0.75,
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.23464,0.23464,0.23464,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.37790,0.37790,0.37790,1.00000"
+              }
+            }
+          ],
+          "image-name" : "magnifying glass.svg",
+          "name" : "magnifying glass",
+          "opacity" : 1,
           "position" : {
             "scale" : 1.2,
             "translation-in-points" : [
-              -178,
-              -58
+              23,
+              -27
             ]
           }
         }
